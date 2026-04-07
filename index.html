@@ -74,12 +74,12 @@ const fromDB = {
   catalog: r => ({ id:r.id, brand:r.brand, name:r.name, category:r.category||'', skinType:r.skin_type||'All', weightGrams:+r.weight_grams||0, estimatedCostKRW:+r.estimated_cost_krw||0, estimatedShippingKRW:+r.estimated_shipping_krw||0, suggestedB2CPrice:+r.suggested_b2c_price_uzs||0, suggestedB2BPrice:+r.suggested_b2b_price_uzs||0, notes:r.notes||'', createdAt:r.created_at?.slice(0,10) }),
   order:   r => ({ id:r.id, customerName:r.customer_name, productId:r.product_id, quantity:+r.quantity||1, priceUZS:+r.price_uzs||0, type:r.type||'B2C', status:r.status||'Pending', salesperson:r.salesperson||'', notes:r.notes||'', createdAt:r.created_at?.slice(0,10) }),
   inv:     r => ({ id:r.id, productId:r.product_id, quantity:+r.quantity||0 }),
-  expense: r => ({ id:r.id, date:r.date, type:r.type, description:r.description, amountUZS:+r.amount_uzs||0, paidBy:r.paid_by||'' }),
+  expense: r => ({ id:r.id, date:r.date, type:r.type, description:r.description, amountKRW:+r.amount_krw||0, paidBy:r.paid_by||'' }),
 };
 const toDB = {
   catalog: p => ({ brand:p.brand, name:p.name, category:p.category||null, skin_type:p.skinType||'All', weight_grams:+p.weightGrams||0, estimated_cost_krw:+p.estimatedCostKRW||0, suggested_b2c_price_uzs:+p.suggestedB2CPrice||0, suggested_b2b_price_uzs:+p.suggestedB2BPrice||0, notes:p.notes||null }),
   order:   o => ({ customer_name:o.customerName, product_id:o.productId||null, quantity:+o.quantity||1, price_uzs:+o.priceUZS||0, type:o.type||'B2C', status:o.status||'Pending', salesperson:o.salesperson||null, notes:o.notes||null }),
-  expense: e => ({ date:e.date, type:e.type, description:e.description, amount_uzs:+e.amountUZS||0, paid_by:e.paidBy||null }),
+  expense: e => ({ date:e.date, type:e.type, description:e.description, amount_krw:+e.amountKRW||0, paid_by:e.paidBy||null }),
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -313,7 +313,8 @@ function DashboardPage({orders,catalog,expenses,settings}) {
     },0);
     const totalCostUZS = totalCostKRW * (+settings.uzsPerKrw||8);
     const estimProfit  = totalRevUZS - totalCostUZS;
-    const totalExpUZS  = expenses.reduce((s,e)=>s+(+e.amountUZS||0),0);
+    const totalExpKRW  = expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
+    const totalExpUZS  = totalExpKRW * (+settings.uzsPerKrw||8);
     const netProfit    = estimProfit - totalExpUZS;
 
     // Top products
@@ -339,7 +340,7 @@ function DashboardPage({orders,catalog,expenses,settings}) {
         <StatBox label="Total Orders"    value={fmtNum(total)}                      sub="All time"            color="pink"/>
         <StatBox label="Total Revenue"   value={fmtUZS(stats.totalRevUZS)}          sub="Paid orders"         color="green"/>
         <StatBox label="Net Profit (est)"value={fmtUZS(stats.netProfit)}            sub="Revenue − costs"     color={stats.netProfit>=0?'violet':'amber'}/>
-        <StatBox label="Total Expenses"  value={fmtUZS(stats.totalExpUZS)}          sub="Salary, cargo, etc." color="gray"/>
+        <StatBox label="Total Expenses"  value={fmtKRW(expenses.reduce((s,e)=>s+(+e.amountKRW||0),0))}  sub="Salary, cargo, etc." color="gray"/>
       </div>
 
       {/* Pipeline */}
@@ -976,7 +977,7 @@ function ExpensesPage({expenses,setExpenses,settings,notify}) {
     return [...list].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   },[expenses,typeFilter]);
 
-  const total = filtered.reduce((s,e)=>s+(+e.amountUZS||0),0);
+  const total = filtered.reduce((s,e)=>s+(+e.amountKRW||0),0);
 
   const save = async(data)=>{
     setSaving(true);
@@ -1010,7 +1011,7 @@ function ExpensesPage({expenses,setExpenses,settings,notify}) {
       <div className="flex items-center gap-2">
         <div className="flex-1">
           <h2 className="font-black text-gray-800 text-xl">Expenses</h2>
-          <p className="text-xs text-gray-400">Total shown: <span className="font-black text-red-500">{fmtUZS(total)}</span></p>
+          <p className="text-xs text-gray-400">Total shown: <span className="font-black text-red-500">{fmtKRW(total)}</span></p>
         </div>
         <Btn size="sm" onClick={()=>{setEditExp(null);setShowForm(true);}}>+ Add</Btn>
       </div>
@@ -1023,14 +1024,14 @@ function ExpensesPage({expenses,setExpenses,settings,notify}) {
       {filtered.length===0
         ? <Empty icon="💰" title="No expenses" sub="Track salaries, cargo, and operational costs"/>
         : <TblWrap>
-            <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount (UZS)</th><th>Paid By</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount (KRW)</th><th>Paid By</th><th></th></tr></thead>
             <tbody>
               {filtered.map(e=>(
                 <tr key={e.id}>
                   <td className="text-gray-400 text-xs">{fmtDate(e.date)}</td>
                   <td><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold">{e.type}</span></td>
                   <td className="font-semibold text-gray-800">{e.description}</td>
-                  <td className="font-black text-red-500">{fmtUZS(e.amountUZS)}</td>
+                  <td className="font-black text-red-500">{fmtKRW(e.amountKRW)}</td>
                   <td className="text-gray-500 text-xs">{e.paidBy||'—'}</td>
                   <td><div className="flex gap-1">
                     <Btn size="xs" variant="ghost" onClick={()=>{setEditExp(e);setShowForm(true);}}>✎</Btn>
@@ -1052,7 +1053,7 @@ function ExpensesPage({expenses,setExpenses,settings,notify}) {
 
 function ExpenseForm({expense,onSave,saving,salespersons}) {
   const sp=salespersons?.length?salespersons:[];
-  const [form,setForm]=useState({date:expense?.date||today(),type:expense?.type||'Salary',description:expense?.description||'',amountUZS:expense?.amountUZS||'',paidBy:expense?.paidBy||sp[0]||''});
+  const [form,setForm]=useState({date:expense?.date||today(),type:expense?.type||'Salary',description:expense?.description||'',amountKRW:expense?.amountKRW||'',paidBy:expense?.paidBy||sp[0]||''});
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
   return (
     <div className="space-y-3">
@@ -1061,13 +1062,13 @@ function ExpenseForm({expense,onSave,saving,salespersons}) {
         <Sel label="Type" required value={form.type} onChange={e=>f('type',e.target.value)}>{EXP_TYPES.map(t=><option key={t}>{t}</option>)}</Sel>
       </div>
       <Inp label="Description" required value={form.description} onChange={e=>f('description',e.target.value)} placeholder="e.g. Monthly cargo fee"/>
-      <Inp label="Amount (UZS)" required type="number" min="0" value={form.amountUZS} onChange={e=>f('amountUZS',e.target.value)} placeholder="500000"/>
+      <Inp label="Amount (KRW)" required type="number" min="0" value={form.amountKRW} onChange={e=>f('amountKRW',e.target.value)} placeholder="50000"/>
       <div>
         <label className="block text-xs font-bold text-gray-500 mb-1">Paid By</label>
         <input list="sp-list" value={form.paidBy} onChange={e=>f('paidBy',e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50" placeholder="Name"/>
         <datalist id="sp-list">{sp.map(s=><option key={s} value={s}/>)}</datalist>
       </div>
-      <Btn size="lg" onClick={()=>{if(!form.description.trim()||!form.amountUZS)return alert('Fill required fields.');onSave(form);}} loading={saving}>✓ Save Expense</Btn>
+      <Btn size="lg" onClick={()=>{if(!form.description.trim()||!form.amountKRW)return alert('Fill required fields.');onSave(form);}} loading={saving}>✓ Save Expense</Btn>
     </div>
   );
 }

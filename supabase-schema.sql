@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   date        DATE NOT NULL DEFAULT CURRENT_DATE,
   type        TEXT NOT NULL,
   description TEXT NOT NULL,
-  amount_uzs  NUMERIC DEFAULT 0,
+  amount_krw  NUMERIC DEFAULT 0,
   paid_by     TEXT DEFAULT '',
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
