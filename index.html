@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>KBeauty Manager 🌸</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase JS client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #fdf2f8; }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 16px); }
+    input, select, textarea { outline: none; }
+    input:focus, select:focus, textarea:focus { border-color: #ec4899 !important; box-shadow: 0 0 0 2px rgba(236,72,153,0.15); }
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #f9a8d4; border-radius: 4px; }
+    .slide-up { animation: slideUp 0.2s ease-out; }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .fade-in { animation: fadeIn 0.15s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+// ─── SUPABASE CONFIG ─────────────────────────────────────────────────────────
+// ⚠️  REPLACE THESE TWO VALUES with your own from:
+//     Supabase Dashboard → Settings → API
+const SUPABASE_URL  = 'https://tyggjybpadgifadakaof.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_1n7GfREMkbbDMrpfGd-TRA_tVCAvgZ7';
+
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ─── DB FIELD MAPPERS (snake_case ↔ camelCase) ───────────────────────────────
+const fromDB = {
+  customer:  c => ({ id: c.id, name: c.name, phone: c.phone || '', address: c.address || '', createdAt: c.created_at }),
+  order:     o => ({ id: o.id, customerId: o.customer_id, salesperson: o.salesperson, type: o.type, status: o.status, sellingPriceUSD: o.selling_price_usd, shippingRatePerKg: o.shipping_rate_per_kg, notes: o.notes || '', createdAt: o.created_at?.slice(0,10) }),
+  orderItem: i => ({ id: i.id, orderId: i.order_id, productName: i.product_name, quantity: i.quantity, purchaseCostKRW: i.purchase_cost_krw, weightKg: i.weight_kg }),
+  expense:   e => ({ id: e.id, date: e.date, type: e.type, description: e.description, amountUSD: e.amount_usd, paidBy: e.paid_by }),
+};
+
+const toDB = {
+  customer:  c => ({ name: c.name, phone: c.phone || null, address: c.address || null }),
+  order:     o => ({ customer_id: o.customerId || null, salesperson: o.salesperson, type: o.type, status: o.status, selling_price_usd: +o.sellingPriceUSD || 0, shipping_rate_per_kg: +o.shippingRatePerKg || 0, notes: o.notes || null }),
+  orderItem: i => ({ order_id: i.orderId, product_name: i.productName, quantity: +i.quantity, purchase_cost_krw: +i.purchaseCostKRW, weight_kg: +i.weightKg || 0 }),
+  expense:   e => ({ date: e.date, type: e.type, description: e.description, amount_usd: +e.amountUSD, paid_by: e.paidBy }),
+};
+
+// ─── LOCAL SETTINGS (exchange rate & team — stays in browser) ────────────────
+const getSettings = () => {
+  try { return JSON.parse(localStorage.getItem('kb_settings')) || { krwToUsd: 0.00073, salespersons: ['Amir','Zara','Dina','Kamol','Sher'] }; }
+  catch { return { krwToUsd: 0.00073, salespersons: ['Amir','Zara','Dina','Kamol','Sher'] }; }
+};
+const saveSettings = s => localStorage.setItem('kb_settings', JSON.stringify(s));
+
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ─── UTILS ──────────────────────────────────────────────────────────────────
+const today    = () => new Date().toISOString().slice(0, 10);
+const fmtDate  = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—';
+const fmtUSD   = n => `$${(+n||0).toFixed(2)}`;
+const fmtKRW   = n => `₩${Math.round(+n||0).toLocaleString()}`;
+const fmtKg    = n => `${(+n||0).toFixed(2)} kg`;
+
+const STATUS_META = {
+  'New':       { bg:'bg-blue-100',   text:'text-blue-700',   dot:'bg-blue-500' },
+  'Purchased': { bg:'bg-amber-100',  text:'text-amber-700',  dot:'bg-amber-500' },
+  'Shipped':   { bg:'bg-violet-100', text:'text-violet-700', dot:'bg-violet-500' },
+  'Delivered': { bg:'bg-green-100',  text:'text-green-700',  dot:'bg-green-500' },
+};
+const STATUSES  = ['New','Purchased','Shipped','Delivered'];
+const EXP_TYPES = ['Salary','Cargo','Office','Marketing','Other'];
+
+// ─── CALCULATION ─────────────────────────────────────────────────────────────
+const calcOrder = (order, items, krwToUsd) => {
+  const its          = items.filter(i => i.orderId === order.id);
+  const totalCostKRW = its.reduce((s,i) => s + (+i.purchaseCostKRW||0)*(+i.quantity||0), 0);
+  const totalCostUSD = totalCostKRW * (+krwToUsd||0);
+  const totalWeightKg= its.reduce((s,i) => s + (+i.weightKg||0)*(+i.quantity||0), 0);
+  const shippingCost = totalWeightKg * (+order.shippingRatePerKg||0);
+  const sellingPrice = +order.sellingPriceUSD||0;
+  const profit       = sellingPrice - totalCostUSD - shippingCost;
+  return { orderItems:its, totalCostKRW, totalCostUSD, totalWeightKg, shippingCost, sellingPrice, profit };
+};
+
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+function Toast({ msg, type }) {
+  if (!msg) return null;
+  const colors = { success:'bg-green-500', error:'bg-red-500', info:'bg-blue-500' };
+  return (
+    <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] px-4 py-2.5 rounded-xl text-white text-sm font-semibold shadow-lg ${colors[type]||'bg-gray-700'} fade-in`}>
+      {msg}
+    </div>
+  );
+}
+
+// ─── UI ATOMS ────────────────────────────────────────────────────────────────
+const Badge = ({ status }) => {
+  const m = STATUS_META[status]||STATUS_META['New'];
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${m.bg} ${m.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />{status}
+    </span>
+  );
+};
+
+const Card = ({ children, className='', onClick }) => (
+  <div onClick={onClick} className={`bg-white rounded-2xl shadow-sm border border-pink-50 p-4 ${onClick?'cursor-pointer active:scale-[0.99] transition-transform':''} ${className}`}>
+    {children}
+  </div>
+);
+
+const Btn = ({ children, onClick, variant='primary', size='md', className='', type='button', disabled=false, loading=false }) => {
+  const base = 'inline-flex items-center justify-center gap-2 font-semibold rounded-xl transition-all active:scale-95 disabled:opacity-50';
+  const sizes = { sm:'px-3 py-1.5 text-sm', md:'px-4 py-2.5 text-sm', lg:'px-5 py-3 text-base w-full' };
+  const variants = {
+    primary:  'bg-pink-500 hover:bg-pink-600 text-white shadow-sm',
+    secondary:'bg-pink-50 hover:bg-pink-100 text-pink-700',
+    danger:   'bg-red-50 hover:bg-red-100 text-red-600',
+    ghost:    'hover:bg-gray-100 text-gray-600',
+    outline:  'border border-pink-200 text-pink-600 hover:bg-pink-50',
+  };
+  return (
+    <button type={type} onClick={onClick} disabled={disabled||loading}
+      className={`${base} ${sizes[size]} ${variants[variant]} ${className}`}>
+      {loading ? <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"/> : children}
+    </button>
+  );
+};
+
+const Input = ({ label, required, className='', ...props }) => (
+  <div className={className}>
+    {label && <label className="block text-xs font-semibold text-gray-500 mb-1">{label}{required&&<span className="text-pink-500 ml-0.5">*</span>}</label>}
+    <input className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 transition-colors" {...props} />
+  </div>
+);
+
+const Sel = ({ label, required, children, className='', ...props }) => (
+  <div className={className}>
+    {label && <label className="block text-xs font-semibold text-gray-500 mb-1">{label}{required&&<span className="text-pink-500 ml-0.5">*</span>}</label>}
+    <select className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 appearance-none transition-colors" {...props}>{children}</select>
+  </div>
+);
+
+const Modal = ({ title, onClose, children }) => (
+  <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center fade-in" style={{background:'rgba(0,0,0,0.4)'}}>
+    <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[90vh] flex flex-col slide-up">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <h3 className="font-bold text-gray-800 text-base">{title}</h3>
+        <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 text-lg font-bold">×</button>
+      </div>
+      <div className="overflow-y-auto flex-1 px-5 py-4">{children}</div>
+    </div>
+  </div>
+);
+
+const StatCard = ({ label, value, sub, color='pink' }) => {
+  const colors = { pink:'from-pink-400 to-rose-500', violet:'from-violet-400 to-purple-500', green:'from-emerald-400 to-green-500', amber:'from-amber-400 to-orange-500' };
+  return (
+    <div className={`bg-gradient-to-br ${colors[color]} rounded-2xl p-4 text-white shadow-sm`}>
+      <p className="text-xs font-medium opacity-80 mb-1">{label}</p>
+      <p className="text-2xl font-bold tracking-tight">{value}</p>
+      {sub && <p className="text-xs opacity-70 mt-1">{sub}</p>}
+    </div>
+  );
+};
+
+const EmptyState = ({ icon, title, sub, action }) => (
+  <div className="flex flex-col items-center justify-center py-16 text-center">
+    <div className="text-5xl mb-3">{icon}</div>
+    <p className="font-semibold text-gray-600 mb-1">{title}</p>
+    <p className="text-sm text-gray-400 mb-4">{sub}</p>
+    {action}
+  </div>
+);
+
+const Spinner = ({ full }) => (
+  <div className={`flex items-center justify-center ${full?'h-64':''}`}>
+    <div className="w-8 h-8 border-4 border-pink-200 border-t-pink-500 rounded-full animate-spin"/>
+  </div>
+);
+
+// ─── NAV ICONS ───────────────────────────────────────────────────────────────
+const Ico = {
+  dashboard: <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>,
+  orders:    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>,
+  customers: <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>,
+  expenses:  <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>,
+  settings:  <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>,
+  plus:      <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>,
+  back:      <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>,
+  trash:     <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>,
+  edit:      <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>,
+  check:     <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>,
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════════════════════════════════
+function App() {
+  const [customers,  setCustomers]  = useState([]);
+  const [orders,     setOrders]     = useState([]);
+  const [orderItems, setOrderItems] = useState([]);
+  const [expenses,   setExpenses]   = useState([]);
+  const [settings,   setSettingsS]  = useState(getSettings);
+  const [loading,    setLoading]    = useState(true);
+  const [toast,      setToast]      = useState({ msg:'', type:'info' });
+  const [page,       setPage]       = useState('dashboard');
+  const [viewOrderId,setViewOrderId]= useState(null);
+  const toastTimer = useRef(null);
+
+  const notify = (msg, type='success') => {
+    clearTimeout(toastTimer.current);
+    setToast({ msg, type });
+    toastTimer.current = setTimeout(() => setToast({ msg:'', type:'info' }), 2500);
+  };
+
+  // ── LOAD ALL DATA ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const [c, o, oi, e] = await Promise.all([
+          db.from('customers').select('*').order('created_at', { ascending: false }),
+          db.from('orders').select('*').order('created_at', { ascending: false }),
+          db.from('order_items').select('*'),
+          db.from('expenses').select('*').order('date', { ascending: false }),
+        ]);
+        if (c.error || o.error || oi.error || e.error) throw new Error('Failed to load data');
+        setCustomers(c.data.map(fromDB.customer));
+        setOrders(o.data.map(fromDB.order));
+        setOrderItems(oi.data.map(fromDB.orderItem));
+        setExpenses(e.data.map(fromDB.expense));
+      } catch(err) {
+        notify('Could not connect to database. Check your Supabase keys.', 'error');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const updateSettings = s => { setSettingsS(s); saveSettings(s); };
+
+  const navTo = p => { setPage(p); setViewOrderId(null); };
+  const openOrder = id => { setViewOrderId(id); setPage('orderDetail'); };
+
+  // ── STATS ──────────────────────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const kr = settings.krwToUsd;
+    const delivered = orders.filter(o => o.status === 'Delivered');
+    const totalRevenue  = delivered.reduce((s,o) => s + (+o.sellingPriceUSD||0), 0);
+    const totalCostUSD  = orders.reduce((s,o) => {
+      const its = orderItems.filter(i => i.orderId === o.id);
+      return s + its.reduce((a,i) => a + (+i.purchaseCostKRW||0)*(+i.quantity||0), 0) * kr;
+    }, 0);
+    const totalShipping = orders.reduce((s,o) => {
+      const wt = orderItems.filter(i=>i.orderId===o.id).reduce((a,i)=>a+(+i.weightKg||0)*(+i.quantity||0),0);
+      return s + wt*(+o.shippingRatePerKg||0);
+    }, 0);
+    const totalExpenses = expenses.reduce((s,e) => s+(+e.amountUSD||0), 0);
+    const grossProfit   = totalRevenue - totalCostUSD - totalShipping;
+    const netProfit     = grossProfit - totalExpenses;
+    return { totalRevenue, totalExpenses, grossProfit, netProfit, totalOrders: orders.length };
+  }, [orders, orderItems, expenses, settings.krwToUsd]);
+
+  if (loading) return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4">
+      <span className="text-5xl">🌸</span>
+      <Spinner />
+      <p className="text-sm text-gray-400">Loading your data…</p>
+    </div>
+  );
+
+  const renderPage = () => {
+    if (page === 'orderDetail' && viewOrderId) return (
+      <OrderDetail orderId={viewOrderId} orders={orders} setOrders={setOrders}
+        orderItems={orderItems} setOrderItems={setOrderItems}
+        customers={customers} settings={settings} notify={notify} onBack={() => navTo('orders')} />
+    );
+    switch(page) {
+      case 'dashboard': return <Dashboard stats={stats} orders={orders} customers={customers} orderItems={orderItems} settings={settings} onViewOrder={openOrder} onNav={navTo} />;
+      case 'orders':    return <OrdersPage orders={orders} setOrders={setOrders} customers={customers} setCustomers={setCustomers} orderItems={orderItems} settings={settings} onView={openOrder} salespersons={settings.salespersons} notify={notify} />;
+      case 'customers': return <CustomersPage customers={customers} setCustomers={setCustomers} orders={orders} notify={notify} />;
+      case 'expenses':  return <ExpensesPage expenses={expenses} setExpenses={setExpenses} salespersons={settings.salespersons} notify={notify} />;
+      case 'settings':  return <SettingsPage settings={settings} setSettings={updateSettings} notify={notify} />;
+      default: return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 pb-20">
+      <Toast msg={toast.msg} type={toast.type} />
+
+      {page !== 'orderDetail' && (
+        <header className="bg-white border-b border-pink-100 sticky top-0 z-30">
+          <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+            <span className="text-xl">🌸</span>
+            <div>
+              <h1 className="font-bold text-gray-800 text-base leading-none">KBeauty Manager</h1>
+              <p className="text-xs text-gray-400">Korean Cosmetics · Uzbekistan</p>
+            </div>
+          </div>
+        </header>
+      )}
+
+      <main className="max-w-2xl mx-auto">{renderPage()}</main>
+
+      {page !== 'orderDetail' && (
+        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-pink-100 safe-bottom z-40">
+          <div className="max-w-2xl mx-auto flex">
+            {[
+              { key:'dashboard', label:'Home',      icon:Ico.dashboard },
+              { key:'orders',    label:'Orders',    icon:Ico.orders },
+              { key:'customers', label:'Customers', icon:Ico.customers },
+              { key:'expenses',  label:'Expenses',  icon:Ico.expenses },
+              { key:'settings',  label:'Settings',  icon:Ico.settings },
+            ].map(n => (
+              <button key={n.key} onClick={() => navTo(n.key)}
+                className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-xs font-medium transition-colors ${page===n.key?'text-pink-500':'text-gray-400 hover:text-gray-600'}`}>
+                {n.icon}{n.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════
+function Dashboard({ stats, orders, customers, orderItems, settings, onViewOrder, onNav }) {
+  const recent = [...orders].slice(0, 5);
+  return (
+    <div className="px-4 py-4 space-y-4 slide-up">
+      <h2 className="font-bold text-gray-800 text-lg">Overview</h2>
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Total Revenue"  value={fmtUSD(stats.totalRevenue)}  sub="Delivered orders"    color="pink" />
+        <StatCard label="Net Profit"     value={fmtUSD(stats.netProfit)}     sub="After all expenses"  color={stats.netProfit>=0?'green':'amber'} />
+        <StatCard label="Total Expenses" value={fmtUSD(stats.totalExpenses)} sub="Salary, cargo, etc." color="violet" />
+        <StatCard label="Total Orders"   value={stats.totalOrders}           sub="All time"            color="amber" />
+      </div>
+      <Card>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          {[
+            { label:'Active',    count:orders.filter(o=>o.status!=='Delivered').length, color:'text-pink-500' },
+            { label:'Shipped',   count:orders.filter(o=>o.status==='Shipped').length,   color:'text-violet-500' },
+            { label:'Delivered', count:orders.filter(o=>o.status==='Delivered').length, color:'text-green-500' },
+          ].map(s => (
+            <div key={s.label}>
+              <p className={`text-2xl font-bold ${s.color}`}>{s.count}</p>
+              <p className="text-xs text-gray-400">{s.label}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
+      {recent.length > 0 ? (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold text-gray-700">Recent Orders</h3>
+            <button onClick={() => onNav('orders')} className="text-xs text-pink-500 font-medium">View all →</button>
+          </div>
+          <div className="space-y-2">
+            {recent.map(order => {
+              const customer = customers.find(c => c.id === order.customerId);
+              const { profit } = calcOrder(order, orderItems, settings.krwToUsd);
+              return (
+                <Card key={order.id} onClick={() => onViewOrder(order.id)} className="hover:border-pink-200 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1"><Badge status={order.status} /><span className="text-xs text-gray-400">{order.type}</span></div>
+                      <p className="font-semibold text-gray-800 text-sm truncate">{customer?.name||'Unknown'}</p>
+                      <p className="text-xs text-gray-400">{fmtDate(order.createdAt)}</p>
+                    </div>
+                    <div className="text-right ml-3">
+                      <p className="font-bold text-gray-800">{fmtUSD(order.sellingPriceUSD)}</p>
+                      <p className={`text-xs font-semibold ${profit>=0?'text-green-600':'text-red-500'}`}>{profit>=0?'+':''}{fmtUSD(profit)}</p>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <EmptyState icon="📦" title="No orders yet" sub="Start by creating your first order" action={<Btn onClick={() => onNav('orders')}>{Ico.plus} New Order</Btn>} />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ORDERS PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+function OrdersPage({ orders, setOrders, customers, setCustomers, orderItems, settings, onView, salespersons, notify }) {
+  const [filter,   setFilter]   = useState('All');
+  const [showForm, setShowForm] = useState(false);
+  const [editId,   setEditId]   = useState(null);
+  const [saving,   setSaving]   = useState(false);
+
+  const filtered = useMemo(() => {
+    const list = filter==='All' ? orders : orders.filter(o=>o.status===filter);
+    return [...list].sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+  }, [orders, filter]);
+
+  const saveOrder = async (data) => {
+    setSaving(true);
+    try {
+      // Create new customer inline if needed
+      let customerId = data.customerId;
+      if (!customerId && data.newCustomerName?.trim()) {
+        const { data: nc, error } = await db.from('customers').insert({ name: data.newCustomerName.trim() }).select().single();
+        if (error) throw error;
+        const mapped = fromDB.customer(nc);
+        setCustomers(prev => [mapped, ...prev]);
+        customerId = mapped.id;
+      }
+
+      const payload = toDB.order({ ...data, customerId });
+      if (editId) {
+        const { error } = await db.from('orders').update(payload).eq('id', editId);
+        if (error) throw error;
+        setOrders(prev => prev.map(o => o.id===editId ? { ...o, ...data, customerId } : o));
+        notify('Order updated ✓');
+      } else {
+        const { data: nd, error } = await db.from('orders').insert(payload).select().single();
+        if (error) throw error;
+        setOrders(prev => [fromDB.order(nd), ...prev]);
+        notify('Order created ✓');
+      }
+      setShowForm(false); setEditId(null);
+    } catch(e) {
+      notify('Save failed: ' + e.message, 'error');
+    } finally { setSaving(false); }
+  };
+
+  const deleteOrder = async id => {
+    if (!confirm('Delete this order and all its items?')) return;
+    const { error } = await db.from('orders').delete().eq('id', id);
+    if (error) return notify('Delete failed', 'error');
+    setOrders(prev => prev.filter(o => o.id!==id));
+    notify('Order deleted');
+  };
+
+  return (
+    <div className="px-4 py-4 slide-up">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-bold text-gray-800 text-lg">Orders</h2>
+        <Btn onClick={() => { setEditId(null); setShowForm(true); }}>{Ico.plus} New Order</Btn>
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-4 px-4">
+        {['All',...STATUSES].map(s => (
+          <button key={s} onClick={() => setFilter(s)}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${filter===s?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200'}`}>
+            {s} ({s==='All'?orders.length:orders.filter(o=>o.status===s).length})
+          </button>
+        ))}
+      </div>
+      {filtered.length === 0 ? (
+        <EmptyState icon="📋" title="No orders" sub="Create your first order" action={<Btn onClick={() => setShowForm(true)}>{Ico.plus} New Order</Btn>} />
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(order => {
+            const customer = customers.find(c => c.id===order.customerId);
+            const { totalCostUSD, shippingCost, profit, totalWeightKg } = calcOrder(order, orderItems, settings.krwToUsd);
+            return (
+              <Card key={order.id} className="hover:border-pink-200 transition-colors">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1"><Badge status={order.status} /><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">{order.type}</span></div>
+                    <p className="font-bold text-gray-800">{customer?.name||'Unknown Customer'}</p>
+                    <p className="text-xs text-gray-400">{order.salesperson} · {fmtDate(order.createdAt)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-gray-800 text-lg">{fmtUSD(order.sellingPriceUSD)}</p>
+                    <p className={`text-sm font-bold ${profit>=0?'text-green-600':'text-red-500'}`}>{profit>=0?'+':''}{fmtUSD(profit)} profit</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-2 mb-3 text-xs">
+                  <div><p className="text-gray-400">Cost</p><p className="font-semibold">{fmtUSD(totalCostUSD)}</p></div>
+                  <div><p className="text-gray-400">Shipping</p><p className="font-semibold">{fmtUSD(shippingCost)}</p></div>
+                  <div><p className="text-gray-400">Weight</p><p className="font-semibold">{fmtKg(totalWeightKg)}</p></div>
+                </div>
+                <div className="flex gap-2">
+                  <Btn size="sm" variant="secondary" onClick={() => onView(order.id)} className="flex-1">View Details</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => { setEditId(order.id); setShowForm(true); }}>{Ico.edit}</Btn>
+                  <Btn size="sm" variant="danger" onClick={() => deleteOrder(order.id)}>{Ico.trash}</Btn>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+      {showForm && (
+        <OrderFormModal order={editId?orders.find(o=>o.id===editId):null} customers={customers} salespersons={salespersons} onSave={saveOrder} saving={saving} onClose={() => { setShowForm(false); setEditId(null); }} />
+      )}
+    </div>
+  );
+}
+
+function OrderFormModal({ order, customers, salespersons, onSave, onClose, saving }) {
+  const sp = salespersons?.length ? salespersons : ['—'];
+  const [form, setForm] = useState({
+    customerId: order?.customerId||'', newCustomerName:'',
+    salesperson: order?.salesperson||sp[0],
+    type: order?.type||'B2C', status: order?.status||'New',
+    sellingPriceUSD: order?.sellingPriceUSD||'',
+    shippingRatePerKg: order?.shippingRatePerKg||'',
+    notes: order?.notes||'',
+  });
+  const [addingCust, setAddingCust] = useState(false);
+  const f = (k,v) => setForm(p => ({ ...p, [k]:v }));
+  const submit = () => {
+    if (!form.customerId && !form.newCustomerName.trim()) return alert('Select or add a customer.');
+    if (!form.sellingPriceUSD) return alert('Enter a selling price.');
+    onSave(form);
+  };
+  return (
+    <Modal title={order?'Edit Order':'New Order'} onClose={onClose}>
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Customer <span className="text-pink-500">*</span></label>
+          {!addingCust ? (
+            <div className="flex gap-2">
+              <select value={form.customerId} onChange={e=>f('customerId',e.target.value)} className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50">
+                <option value="">— Select customer —</option>
+                {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <Btn size="sm" variant="outline" onClick={() => setAddingCust(true)}>+ New</Btn>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <input value={form.newCustomerName} onChange={e=>f('newCustomerName',e.target.value)} placeholder="New customer name" className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50" />
+              <Btn size="sm" variant="ghost" onClick={() => setAddingCust(false)}>Cancel</Btn>
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Sel label="Salesperson" value={form.salesperson} onChange={e=>f('salesperson',e.target.value)}>{sp.map(s=><option key={s}>{s}</option>)}</Sel>
+          <Sel label="Type" value={form.type} onChange={e=>f('type',e.target.value)}><option>B2C</option><option>B2B</option></Sel>
+        </div>
+        <Sel label="Status" value={form.status} onChange={e=>f('status',e.target.value)}>{STATUSES.map(s=><option key={s}>{s}</option>)}</Sel>
+        <Input label="Selling Price (USD)" type="number" min="0" step="0.01" required value={form.sellingPriceUSD} onChange={e=>f('sellingPriceUSD',e.target.value)} placeholder="e.g. 150.00" />
+        <Input label="Shipping Rate (USD/kg)" type="number" min="0" step="0.01" value={form.shippingRatePerKg} onChange={e=>f('shippingRatePerKg',e.target.value)} placeholder="e.g. 5.00" />
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Notes</label>
+          <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 resize-none" placeholder="Optional notes..." />
+        </div>
+        <Btn size="lg" onClick={submit} loading={saving}>{Ico.check} Save Order</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ORDER DETAIL
+// ═══════════════════════════════════════════════════════════════════════════
+function OrderDetail({ orderId, orders, setOrders, orderItems, setOrderItems, customers, settings, notify, onBack }) {
+  const order = orders.find(o => o.id===orderId);
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [editItem,     setEditItem]     = useState(null);
+  const [showEdit,     setShowEdit]     = useState(false);
+  const [saving,       setSaving]       = useState(false);
+
+  if (!order) return <div className="p-4 text-center text-gray-500">Order not found.</div>;
+
+  const customer = customers.find(c => c.id===order.customerId);
+  const { orderItems: items, totalCostKRW, totalCostUSD, totalWeightKg, shippingCost, sellingPrice, profit } = calcOrder(order, orderItems, settings.krwToUsd);
+
+  const updateStatus = async status => {
+    const { error } = await db.from('orders').update({ status }).eq('id', orderId);
+    if (error) return notify('Update failed', 'error');
+    setOrders(prev => prev.map(o => o.id===orderId ? { ...o, status } : o));
+    notify(`Status → ${status}`);
+  };
+
+  const saveItem = async data => {
+    setSaving(true);
+    try {
+      const payload = toDB.orderItem({ ...data, orderId });
+      if (editItem) {
+        const { error } = await db.from('order_items').update(payload).eq('id', editItem.id);
+        if (error) throw error;
+        setOrderItems(prev => prev.map(i => i.id===editItem.id ? { ...i, ...data, orderId } : i));
+        notify('Item updated ✓');
+      } else {
+        const { data: nd, error } = await db.from('order_items').insert(payload).select().single();
+        if (error) throw error;
+        setOrderItems(prev => [...prev, fromDB.orderItem(nd)]);
+        notify('Item added ✓');
+      }
+      setShowItemForm(false); setEditItem(null);
+    } catch(e) { notify('Save failed: '+e.message,'error'); }
+    finally { setSaving(false); }
+  };
+
+  const deleteItem = async id => {
+    if (!confirm('Remove this item?')) return;
+    const { error } = await db.from('order_items').delete().eq('id', id);
+    if (error) return notify('Delete failed', 'error');
+    setOrderItems(prev => prev.filter(i => i.id!==id));
+    notify('Item removed');
+  };
+
+  const saveOrderEdit = async data => {
+    setSaving(true);
+    try {
+      const { error } = await db.from('orders').update(toDB.order({ ...data, customerId: order.customerId })).eq('id', orderId);
+      if (error) throw error;
+      setOrders(prev => prev.map(o => o.id===orderId ? { ...o, ...data } : o));
+      notify('Order updated ✓');
+      setShowEdit(false);
+    } catch(e) { notify('Save failed: '+e.message,'error'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="slide-up">
+      <header className="bg-white border-b border-pink-100 sticky top-0 z-30">
+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+          <button onClick={onBack} className="p-1.5 rounded-xl bg-gray-100 text-gray-600">{Ico.back}</button>
+          <div className="flex-1 min-w-0">
+            <h1 className="font-bold text-gray-800 truncate">{customer?.name||'Unknown'}</h1>
+            <div className="flex items-center gap-2"><Badge status={order.status} /><span className="text-xs text-gray-400">{order.type} · {fmtDate(order.createdAt)}</span></div>
+          </div>
+          <Btn size="sm" variant="ghost" onClick={() => setShowEdit(true)}>{Ico.edit}</Btn>
+        </div>
+      </header>
+
+      <div className="px-4 py-4 space-y-4 max-w-2xl mx-auto">
+        {/* Financials */}
+        <div className="bg-gradient-to-br from-pink-500 to-rose-600 rounded-2xl p-4 text-white shadow-md">
+          <div className="grid grid-cols-2 gap-3">
+            <div><p className="text-xs opacity-70">Selling Price</p><p className="text-2xl font-bold">{fmtUSD(sellingPrice)}</p></div>
+            <div className="text-right"><p className="text-xs opacity-70">Profit</p><p className={`text-2xl font-bold ${profit<0?'text-red-200':''}`}>{profit>=0?'+':''}{fmtUSD(profit)}</p></div>
+          </div>
+          <div className="mt-3 pt-3 border-t border-white/20 grid grid-cols-3 gap-2 text-xs text-center">
+            <div><p className="opacity-60">Product Cost</p><p className="font-semibold">{fmtUSD(totalCostUSD)}</p><p className="opacity-50">{fmtKRW(totalCostKRW)}</p></div>
+            <div><p className="opacity-60">Shipping</p><p className="font-semibold">{fmtUSD(shippingCost)}</p><p className="opacity-50">{fmtKg(totalWeightKg)}</p></div>
+            <div><p className="opacity-60">Margin</p><p className="font-semibold">{sellingPrice>0?((profit/sellingPrice)*100).toFixed(1):0}%</p></div>
+          </div>
+        </div>
+
+        {/* Status */}
+        <Card>
+          <p className="text-xs font-semibold text-gray-500 mb-3">Order Status</p>
+          <div className="flex items-center gap-1 mb-3">
+            {STATUSES.map((s,i) => {
+              const idx = STATUSES.indexOf(order.status);
+              const active = i <= idx;
+              return (
+                <React.Fragment key={s}>
+                  <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${active?'bg-pink-500 text-white':'bg-gray-100 text-gray-400'}`}>
+                    {i<idx ? Ico.check : i+1}
+                  </div>
+                  {i<STATUSES.length-1 && <div className={`flex-1 h-1 rounded-full ${i<idx?'bg-pink-500':'bg-gray-100'}`}/>}
+                </React.Fragment>
+              );
+            })}
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            {STATUSES.map(s => (
+              <button key={s} onClick={() => updateStatus(s)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${order.status===s?'bg-pink-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{s}</button>
+            ))}
+          </div>
+        </Card>
+
+        {/* Details */}
+        <Card>
+          <p className="text-xs font-semibold text-gray-500 mb-2">Details</p>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between"><span className="text-gray-500">Salesperson</span><span className="font-medium">{order.salesperson}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Shipping Rate</span><span className="font-medium">{fmtUSD(order.shippingRatePerKg)}/kg</span></div>
+            {order.notes&&<div className="flex justify-between"><span className="text-gray-500">Notes</span><span className="font-medium text-right max-w-[60%]">{order.notes}</span></div>}
+          </div>
+        </Card>
+
+        {/* Items */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="font-bold text-gray-800">Products</h3>
+              <p className="text-xs text-gray-400">{items.length} item{items.length!==1?'s':''} · {fmtKg(totalWeightKg)} total</p>
+            </div>
+            <Btn size="sm" onClick={() => { setEditItem(null); setShowItemForm(true); }}>{Ico.plus} Add Item</Btn>
+          </div>
+          {items.length === 0 ? (
+            <Card><EmptyState icon="📦" title="No products yet" sub="Add items to this order" action={<Btn size="sm" onClick={() => setShowItemForm(true)}>{Ico.plus} Add Item</Btn>} /></Card>
+          ) : (
+            <div className="space-y-2">
+              {items.map(item => {
+                const itemCostKRW = (+item.purchaseCostKRW||0)*(+item.quantity||0);
+                const itemCostUSD = itemCostKRW*(settings.krwToUsd||0);
+                const itemWeight  = (+item.weightKg||0)*(+item.quantity||0);
+                return (
+                  <Card key={item.id}>
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-800 truncate">{item.productName}</p>
+                        <p className="text-xs text-gray-400">Qty: {item.quantity} · {fmtKRW(item.purchaseCostKRW)}/unit · {item.weightKg}kg/unit</p>
+                      </div>
+                      <div className="flex gap-1 ml-2">
+                        <button onClick={() => { setEditItem(item); setShowItemForm(true); }} className="p-1.5 text-gray-400 hover:text-pink-500 rounded-lg hover:bg-pink-50">{Ico.edit}</button>
+                        <button onClick={() => deleteItem(item.id)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50">{Ico.trash}</button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 bg-gray-50 rounded-xl p-2 text-xs text-center">
+                      <div><p className="text-gray-400">Total KRW</p><p className="font-semibold">{fmtKRW(itemCostKRW)}</p></div>
+                      <div><p className="text-gray-400">Total USD</p><p className="font-semibold">{fmtUSD(itemCostUSD)}</p></div>
+                      <div><p className="text-gray-400">Total Weight</p><p className="font-semibold">{fmtKg(itemWeight)}</p></div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {showItemForm && <ItemFormModal item={editItem} onSave={saveItem} saving={saving} onClose={() => { setShowItemForm(false); setEditItem(null); }} />}
+      {showEdit && <OrderFormModal order={order} customers={customers} salespersons={[order.salesperson]} onSave={saveOrderEdit} saving={saving} onClose={() => setShowEdit(false)} />}
+    </div>
+  );
+}
+
+function ItemFormModal({ item, onSave, onClose, saving }) {
+  const [form, setForm] = useState({ productName:item?.productName||'', quantity:item?.quantity||'', purchaseCostKRW:item?.purchaseCostKRW||'', weightKg:item?.weightKg||'' });
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
+  const totalKRW = (+form.purchaseCostKRW||0)*(+form.quantity||0);
+  const totalWt  = (+form.weightKg||0)*(+form.quantity||0);
+  const submit = () => {
+    if (!form.productName.trim()) return alert('Enter product name.');
+    if (!form.quantity||+form.quantity<=0) return alert('Enter valid quantity.');
+    if (!form.purchaseCostKRW||+form.purchaseCostKRW<=0) return alert('Enter purchase cost in KRW.');
+    onSave(form);
+  };
+  return (
+    <Modal title={item?'Edit Product':'Add Product'} onClose={onClose}>
+      <div className="space-y-3">
+        <Input label="Product Name" required value={form.productName} onChange={e=>f('productName',e.target.value)} placeholder="e.g. COSRX Snail Cream" />
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="Quantity" required type="number" min="1" value={form.quantity} onChange={e=>f('quantity',e.target.value)} placeholder="1" />
+          <Input label="Cost per unit (KRW)" required type="number" min="0" value={form.purchaseCostKRW} onChange={e=>f('purchaseCostKRW',e.target.value)} placeholder="15000" />
+        </div>
+        <Input label="Weight per unit (kg)" type="number" min="0" step="0.001" value={form.weightKg} onChange={e=>f('weightKg',e.target.value)} placeholder="0.150" />
+        {(form.quantity&&form.purchaseCostKRW) && (
+          <div className="bg-pink-50 rounded-xl p-3 text-sm">
+            <p className="text-xs font-semibold text-pink-600 mb-1.5">Auto-calculated</p>
+            <div className="flex justify-between text-gray-600"><span>Total Cost</span><span className="font-semibold">{fmtKRW(totalKRW)}</span></div>
+            {form.weightKg&&<div className="flex justify-between text-gray-600 mt-1"><span>Total Weight</span><span className="font-semibold">{fmtKg(totalWt)}</span></div>}
+          </div>
+        )}
+        <Btn size="lg" onClick={submit} loading={saving}>{Ico.check} Save Product</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CUSTOMERS
+// ═══════════════════════════════════════════════════════════════════════════
+function CustomersPage({ customers, setCustomers, orders, notify }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editId,   setEditId]   = useState(null);
+  const [search,   setSearch]   = useState('');
+  const [saving,   setSaving]   = useState(false);
+
+  const filtered = useMemo(() => customers.filter(c => c.name.toLowerCase().includes(search.toLowerCase())||c.phone?.includes(search)), [customers, search]);
+
+  const save = async data => {
+    setSaving(true);
+    try {
+      if (editId) {
+        const { error } = await db.from('customers').update(toDB.customer(data)).eq('id', editId);
+        if (error) throw error;
+        setCustomers(prev => prev.map(c => c.id===editId ? { ...c, ...data } : c));
+        notify('Customer updated ✓');
+      } else {
+        const { data: nd, error } = await db.from('customers').insert(toDB.customer(data)).select().single();
+        if (error) throw error;
+        setCustomers(prev => [fromDB.customer(nd), ...prev]);
+        notify('Customer added ✓');
+      }
+      setShowForm(false); setEditId(null);
+    } catch(e) { notify('Save failed: '+e.message, 'error'); }
+    finally { setSaving(false); }
+  };
+
+  const del = async id => {
+    const cnt = orders.filter(o=>o.customerId===id).length;
+    if (cnt>0 && !confirm(`This customer has ${cnt} orders. Delete anyway?`)) return;
+    const { error } = await db.from('customers').delete().eq('id', id);
+    if (error) return notify('Delete failed','error');
+    setCustomers(prev => prev.filter(c=>c.id!==id));
+    notify('Customer deleted');
+  };
+
+  return (
+    <div className="px-4 py-4 slide-up">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-bold text-gray-800 text-lg">Customers</h2>
+        <Btn onClick={() => { setEditId(null); setShowForm(true); }}>{Ico.plus} Add</Btn>
+      </div>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search customers…" className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white mb-4" />
+      {filtered.length===0 ? (
+        <EmptyState icon="👥" title="No customers yet" sub="Add your first customer" action={<Btn onClick={() => setShowForm(true)}>{Ico.plus} Add Customer</Btn>} />
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(c => {
+            const cnt = orders.filter(o=>o.customerId===c.id).length;
+            return (
+              <Card key={c.id}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-pink-400 to-rose-500 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{c.name[0]?.toUpperCase()}</div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-800 truncate">{c.name}</p>
+                      <p className="text-xs text-gray-400">{c.phone||'No phone'} · {cnt} order{cnt!==1?'s':''}</p>
+                      {c.address && <p className="text-xs text-gray-400 truncate">📍 {c.address}</p>}
+                    </div>
+                  </div>
+                  <div className="flex gap-1 ml-2">
+                    <button onClick={() => { setEditId(c.id); setShowForm(true); }} className="p-2 text-gray-400 hover:text-pink-500 rounded-xl hover:bg-pink-50">{Ico.edit}</button>
+                    <button onClick={() => del(c.id)} className="p-2 text-gray-400 hover:text-red-500 rounded-xl hover:bg-red-50">{Ico.trash}</button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+      {showForm && (
+        <Modal title={editId?'Edit Customer':'New Customer'} onClose={() => { setShowForm(false); setEditId(null); }}>
+          <CustomerForm customer={editId?customers.find(c=>c.id===editId):null} onSave={save} saving={saving} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function CustomerForm({ customer, onSave, saving }) {
+  const [form, setForm] = useState({ name:customer?.name||'', phone:customer?.phone||'', address:customer?.address||'' });
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
+  return (
+    <div className="space-y-3">
+      <Input label="Full Name" required value={form.name} onChange={e=>f('name',e.target.value)} placeholder="e.g. Nilufar Karimova" />
+      <Input label="Phone Number" type="tel" value={form.phone} onChange={e=>f('phone',e.target.value)} placeholder="+998 90 123 45 67" />
+      <div>
+        <label className="block text-xs font-semibold text-gray-500 mb-1">Address</label>
+        <textarea value={form.address} onChange={e=>f('address',e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 resize-none" placeholder="City, district, street…" />
+      </div>
+      <Btn size="lg" onClick={() => { if(!form.name.trim()) return alert('Name required.'); onSave(form); }} loading={saving}>{Ico.check} Save Customer</Btn>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPENSES
+// ═══════════════════════════════════════════════════════════════════════════
+function ExpensesPage({ expenses, setExpenses, salespersons, notify }) {
+  const [showForm,    setShowForm]    = useState(false);
+  const [editId,      setEditId]      = useState(null);
+  const [filterType,  setFilterType]  = useState('All');
+  const [saving,      setSaving]      = useState(false);
+
+  const filtered = useMemo(() => {
+    const list = filterType==='All' ? expenses : expenses.filter(e=>e.type===filterType);
+    return [...list].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  }, [expenses, filterType]);
+
+  const total = filtered.reduce((s,e)=>s+(+e.amountUSD||0), 0);
+
+  const save = async data => {
+    setSaving(true);
+    try {
+      if (editId) {
+        const { error } = await db.from('expenses').update(toDB.expense(data)).eq('id', editId);
+        if (error) throw error;
+        setExpenses(prev => prev.map(e => e.id===editId ? { ...e, ...data } : e));
+        notify('Expense updated ✓');
+      } else {
+        const { data: nd, error } = await db.from('expenses').insert(toDB.expense(data)).select().single();
+        if (error) throw error;
+        setExpenses(prev => [fromDB.expense(nd), ...prev]);
+        notify('Expense added ✓');
+      }
+      setShowForm(false); setEditId(null);
+    } catch(e) { notify('Save failed: '+e.message, 'error'); }
+    finally { setSaving(false); }
+  };
+
+  const del = async id => {
+    if (!confirm('Delete this expense?')) return;
+    const { error } = await db.from('expenses').delete().eq('id', id);
+    if (error) return notify('Delete failed','error');
+    setExpenses(prev => prev.filter(e=>e.id!==id));
+    notify('Expense deleted');
+  };
+
+  const TYPE_ICONS = { Salary:'👤', Cargo:'🚢', Office:'🏢', Marketing:'📢', Other:'📌' };
+
+  return (
+    <div className="px-4 py-4 slide-up">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="font-bold text-gray-800 text-lg">Expenses</h2>
+          <p className="text-xs text-gray-400">Showing: <span className="font-semibold text-red-500">{fmtUSD(total)}</span></p>
+        </div>
+        <Btn onClick={() => { setEditId(null); setShowForm(true); }}>{Ico.plus} Add</Btn>
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-4 px-4">
+        {['All',...EXP_TYPES].map(t => (
+          <button key={t} onClick={() => setFilterType(t)}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${filterType===t?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200'}`}>{t}</button>
+        ))}
+      </div>
+      {filtered.length===0 ? (
+        <EmptyState icon="💰" title="No expenses" sub="Track salary, cargo, and other costs" action={<Btn onClick={() => setShowForm(true)}>{Ico.plus} Add Expense</Btn>} />
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(exp => (
+            <Card key={exp.id}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-xl flex-shrink-0">{TYPE_ICONS[exp.type]||'📌'}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5"><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">{exp.type}</span><span className="text-xs text-gray-400">{fmtDate(exp.date)}</span></div>
+                  <p className="font-semibold text-gray-800 truncate">{exp.description}</p>
+                  <p className="text-xs text-gray-400">Paid by: {exp.paidBy}</p>
+                </div>
+                <div className="text-right ml-2">
+                  <p className="font-bold text-red-500">{fmtUSD(exp.amountUSD)}</p>
+                  <div className="flex gap-1 justify-end mt-1">
+                    <button onClick={() => { setEditId(exp.id); setShowForm(true); }} className="p-1 text-gray-400 hover:text-pink-500">{Ico.edit}</button>
+                    <button onClick={() => del(exp.id)} className="p-1 text-gray-400 hover:text-red-500">{Ico.trash}</button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+      {showForm && (
+        <Modal title={editId?'Edit Expense':'New Expense'} onClose={() => { setShowForm(false); setEditId(null); }}>
+          <ExpenseForm expense={editId?expenses.find(e=>e.id===editId):null} onSave={save} saving={saving} salespersons={salespersons} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ExpenseForm({ expense, onSave, saving, salespersons }) {
+  const sp = salespersons?.length ? salespersons : [];
+  const [form, setForm] = useState({ date:expense?.date||today(), type:expense?.type||'Salary', description:expense?.description||'', amountUSD:expense?.amountUSD||'', paidBy:expense?.paidBy||sp[0]||'' });
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Date" required type="date" value={form.date} onChange={e=>f('date',e.target.value)} />
+        <Sel label="Type" required value={form.type} onChange={e=>f('type',e.target.value)}>{EXP_TYPES.map(t=><option key={t}>{t}</option>)}</Sel>
+      </div>
+      <Input label="Description" required value={form.description} onChange={e=>f('description',e.target.value)} placeholder="e.g. Monthly cargo payment" />
+      <Input label="Amount (USD)" required type="number" min="0" step="0.01" value={form.amountUSD} onChange={e=>f('amountUSD',e.target.value)} placeholder="0.00" />
+      <div>
+        <label className="block text-xs font-semibold text-gray-500 mb-1">Paid By</label>
+        <input list="sp-opts" value={form.paidBy} onChange={e=>f('paidBy',e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50" placeholder="Name" />
+        <datalist id="sp-opts">{sp.map(s=><option key={s} value={s}/>)}</datalist>
+      </div>
+      <Btn size="lg" onClick={() => { if(!form.description.trim()||!form.amountUSD) return alert('Fill required fields.'); onSave(form); }} loading={saving}>{Ico.check} Save Expense</Btn>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════
+function SettingsPage({ settings, setSettings, notify }) {
+  const [krwToUsd, setKrwToUsd] = useState(settings.krwToUsd);
+  const [spList,   setSpList]   = useState((settings.salespersons||[]).join(', '));
+
+  const save = () => {
+    setSettings({ ...settings, krwToUsd: +krwToUsd, salespersons: spList.split(',').map(s=>s.trim()).filter(Boolean) });
+    notify('Settings saved ✓');
+  };
+
+  return (
+    <div className="px-4 py-4 slide-up space-y-4">
+      <h2 className="font-bold text-gray-800 text-lg">Settings</h2>
+      <Card>
+        <p className="font-semibold text-gray-700 mb-3">Exchange Rate</p>
+        <div className="space-y-2">
+          <Input label="KRW → USD Rate" type="number" step="0.000001" value={krwToUsd} onChange={e=>setKrwToUsd(e.target.value)} />
+          <p className="text-xs text-gray-400">₩1,000 = ${(1000*(+krwToUsd||0)).toFixed(2)} · Update from Google "KRW to USD"</p>
+        </div>
+      </Card>
+      <Card>
+        <p className="font-semibold text-gray-700 mb-3">Team Members</p>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Salespersons (comma-separated)</label>
+          <textarea value={spList} onChange={e=>setSpList(e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 resize-none" placeholder="Amir, Zara, Dina…" />
+        </div>
+      </Card>
+      <Btn size="lg" onClick={save}>{Ico.check} Save Settings</Btn>
+      <Card>
+        <p className="font-semibold text-gray-700 mb-1">About</p>
+        <p className="text-sm text-gray-500">KBeauty Manager v2.0 · Supabase Edition</p>
+        <p className="text-xs text-gray-400 mt-1">Data stored in your Supabase PostgreSQL database.</p>
+      </Card>
+    </div>
+  );
+}
+
+// ─── MOUNT ────────────────────────────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
