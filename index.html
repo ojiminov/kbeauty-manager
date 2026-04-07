@@ -13,7 +13,6 @@
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Nunito',sans-serif;background:#fdf2f8;color:#1f2937}
-    .safe-bottom{padding-bottom:env(safe-area-inset-bottom,12px)}
     ::-webkit-scrollbar{width:5px;height:5px}
     ::-webkit-scrollbar-thumb{background:#f9a8d4;border-radius:4px}
     input:focus,select:focus,textarea:focus{outline:none;border-color:#ec4899!important;box-shadow:0 0 0 2px rgba(236,72,153,.15)}
@@ -27,7 +26,6 @@
     @keyframes slideUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
     .fade-in{animation:fadeIn .15s ease-out}
     @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-    .pipeline-bar{display:flex;gap:2px;border-radius:12px;overflow:hidden;height:8px}
   </style>
 </head>
 <body>
@@ -35,32 +33,23 @@
 <script type="text/babel">
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
-// ══════════════════════════════════════════════════════════════
-// CONFIG
-// ══════════════════════════════════════════════════════════════
 const SUPABASE_URL = 'https://tyggjybpadgifadakaof.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_1n7GfREMkbbDMrpfGd-TRA_tVCAvgZ7';
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// ══════════════════════════════════════════════════════════════
-// CONSTANTS
-// ══════════════════════════════════════════════════════════════
-const STATUSES   = ['Pending','Purchased','Shipped','Delivered','Paid'];
-const CATEGORIES = ['Toner','Serum','Moisturizer','Sunscreen','Cleanser','Mask','Eye Cream','Lip','Body','Hair','Other'];
-const SKIN_TYPES = ['All','Dry','Oily','Combination','Sensitive','Normal'];
-const EXP_TYPES  = ['Salary','Cargo','Office','Marketing','Other'];
+const ORDER_STATUSES = ['Pending','Purchased','Shipped','Delivered','Posted'];
+const CATEGORIES = ['Toner','Serum','Moisturizer','Sunscreen','Cleanser','Mask','Eye Care','Lip','Body','Hair','Other'];
+const SKIN_TYPES = ['All','All Skin Types','Dry','Oily','Oily/Combo','Combination','Sensitive','Normal','Normal/Dry'];
+const EXP_TYPES  = ['Salary','Cargo','Packaging','Postal','Marketing','Other'];
 
 const STATUS_STYLE = {
-  Pending:   {bg:'bg-amber-100',  text:'text-amber-800',  dot:'bg-amber-400',  hex:'#fef3c7'},
-  Purchased: {bg:'bg-blue-100',   text:'text-blue-800',   dot:'bg-blue-400',   hex:'#dbeafe'},
-  Shipped:   {bg:'bg-violet-100', text:'text-violet-800', dot:'bg-violet-400', hex:'#ede9fe'},
-  Delivered: {bg:'bg-green-100',  text:'text-green-800',  dot:'bg-green-500',  hex:'#dcfce7'},
-  Paid:      {bg:'bg-pink-100',   text:'text-pink-800',   dot:'bg-pink-500',   hex:'#fce7f3'},
+  Pending:   {bg:'bg-amber-100',  text:'text-amber-800',  dot:'bg-amber-400'},
+  Purchased: {bg:'bg-blue-100',   text:'text-blue-800',   dot:'bg-blue-400'},
+  Shipped:   {bg:'bg-violet-100', text:'text-violet-800', dot:'bg-violet-400'},
+  Delivered: {bg:'bg-green-100',  text:'text-green-600',  dot:'bg-green-500'},
+  Posted:    {bg:'bg-pink-100',   text:'text-pink-700',   dot:'bg-pink-500'},
 };
 
-// ══════════════════════════════════════════════════════════════
-// UTILS
-// ══════════════════════════════════════════════════════════════
 const today   = () => new Date().toISOString().slice(0,10);
 const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
 const fmtKRW  = n => `₩${Math.round(+n||0).toLocaleString()}`;
@@ -71,48 +60,53 @@ const lsSet   = (k,v) => { try{localStorage.setItem('muna_'+k,JSON.stringify(v))
 
 // DB mappers
 const fromDB = {
-  catalog: r => ({ id:r.id, brand:r.brand, name:r.name, category:r.category||'', skinType:r.skin_type||'All', weightGrams:+r.weight_grams||0, estimatedCostKRW:+r.estimated_cost_krw||0, estimatedShippingKRW:+r.estimated_shipping_krw||0, suggestedB2CPrice:+r.suggested_b2c_price_uzs||0, suggestedB2BPrice:+r.suggested_b2b_price_uzs||0, notes:r.notes||'', createdAt:r.created_at?.slice(0,10) }),
-  order:   r => ({ id:r.id, customerName:r.customer_name, productId:r.product_id, quantity:+r.quantity||1, priceUZS:+r.price_uzs||0, type:r.type||'B2C', status:r.status||'Pending', salesperson:r.salesperson||'', notes:r.notes||'', createdAt:r.created_at?.slice(0,10) }),
-  inv:     r => ({ id:r.id, productId:r.product_id, quantity:+r.quantity||0 }),
-  expense: r => ({ id:r.id, date:r.date, type:r.type, description:r.description, amountKRW:+r.amount_krw||0, paidBy:r.paid_by||'' }),
+  catalog:  r => ({id:r.id,brand:r.brand,name:r.name,category:r.category||'',skinType:r.skin_type||'All',weightGrams:+r.weight_grams||0,estimatedCostKRW:+r.estimated_cost_krw||0,suggestedB2CPrice:+r.suggested_b2c_price_uzs||0,suggestedB2BPrice:+r.suggested_b2b_price_uzs||0,notes:r.notes||'',createdAt:r.created_at?.slice(0,10)}),
+  customer: r => ({id:r.id,name:r.name,telegram:r.telegram||'',phone:r.phone||'',address:r.address||'',createdAt:r.created_at?.slice(0,10)}),
+  order:    r => ({id:r.id,customerId:r.customer_id,status:r.status||'Pending',paymentStatus:r.payment_status||'Unpaid',salesperson:r.salesperson||'',notes:r.notes||'',createdAt:r.created_at?.slice(0,10)}),
+  orderItem:r => ({id:r.id,orderId:r.order_id,productId:r.product_id,quantity:+r.quantity||1,priceUZS:+r.price_uzs||0,type:r.type||'B2C'}),
+  expense:  r => ({id:r.id,date:r.date,type:r.type,description:r.description,amountKRW:+r.amount_krw||0,paidBy:r.paid_by||''}),
+  transfer: r => ({id:r.id,date:r.date,amountKRW:+r.amount_krw||0,amountUZS:+r.amount_uzs||0,notes:r.notes||''}),
+  capital:  r => ({id:r.id,date:r.date,amountUZS:+r.amount_uzs||0,person:r.person||'',notes:r.notes||''}),
 };
 const toDB = {
-  catalog: p => ({ brand:p.brand, name:p.name, category:p.category||null, skin_type:p.skinType||'All', weight_grams:+p.weightGrams||0, estimated_cost_krw:+p.estimatedCostKRW||0, suggested_b2c_price_uzs:+p.suggestedB2CPrice||0, suggested_b2b_price_uzs:+p.suggestedB2BPrice||0, notes:p.notes||null }),
-  order:   o => ({ customer_name:o.customerName, product_id:o.productId||null, quantity:+o.quantity||1, price_uzs:+o.priceUZS||0, type:o.type||'B2C', status:o.status||'Pending', salesperson:o.salesperson||null, notes:o.notes||null }),
-  expense: e => ({ date:e.date, type:e.type, description:e.description, amount_krw:+e.amountKRW||0, paid_by:e.paidBy||null }),
+  catalog:  p => ({brand:p.brand,name:p.name,category:p.category||null,skin_type:p.skinType||'All',weight_grams:+p.weightGrams||0,estimated_cost_krw:+p.estimatedCostKRW||0,suggested_b2c_price_uzs:+p.suggestedB2CPrice||0,suggested_b2b_price_uzs:+p.suggestedB2BPrice||0,notes:p.notes||null}),
+  customer: c => ({name:c.name,telegram:c.telegram||null,phone:c.phone||null,address:c.address||null}),
+  order:    o => ({customer_id:o.customerId||null,status:o.status||'Pending',payment_status:o.paymentStatus||'Unpaid',salesperson:o.salesperson||null,notes:o.notes||null}),
+  orderItem:i => ({order_id:i.orderId,product_id:i.productId||null,quantity:+i.quantity||1,price_uzs:+i.priceUZS||0,type:i.type||'B2C'}),
+  expense:  e => ({date:e.date,type:e.type,description:e.description,amount_krw:+e.amountKRW||0,paid_by:e.paidBy||null}),
+  transfer: t => ({date:t.date,amount_krw:+t.amountKRW||0,amount_uzs:+t.amountUZS||0,notes:t.notes||null}),
+  capital:  c => ({date:c.date,amount_uzs:+c.amountUZS||0,person:c.person||null,notes:c.notes||null}),
 };
 
-// ══════════════════════════════════════════════════════════════
-// UI ATOMS
-// ══════════════════════════════════════════════════════════════
-function Toast({ msg, type }) {
-  if (!msg) return null;
-  const bg = type==='error'?'bg-red-500':type==='info'?'bg-blue-500':'bg-green-500';
+// ── UI ATOMS ──────────────────────────────────────────────────
+function Toast({msg,type}) {
+  if(!msg) return null;
+  const bg=type==='error'?'bg-red-500':type==='info'?'bg-blue-500':'bg-green-500';
   return <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[999] px-5 py-2.5 rounded-2xl text-white text-sm font-bold shadow-xl fade-in ${bg}`}>{msg}</div>;
 }
 
-const Btn = ({children,onClick,variant='primary',size='md',className='',type='button',disabled=false,loading=false}) => {
+const Btn=({children,onClick,variant='primary',size='md',className='',type='button',disabled=false,loading=false})=>{
   const base='inline-flex items-center justify-center gap-1.5 font-bold rounded-xl transition-all active:scale-95 disabled:opacity-50 whitespace-nowrap';
   const sz={xs:'px-2.5 py-1 text-xs',sm:'px-3 py-1.5 text-xs',md:'px-3.5 py-2 text-sm',lg:'px-4 py-2.5 text-sm w-full'};
   const va={primary:'bg-pink-500 hover:bg-pink-600 text-white shadow-sm',secondary:'bg-pink-50 hover:bg-pink-100 text-pink-700',danger:'bg-red-50 hover:bg-red-100 text-red-600',ghost:'hover:bg-gray-100 text-gray-500',outline:'border border-pink-200 text-pink-600 hover:bg-pink-50'};
   return <button type={type} onClick={onClick} disabled={disabled||loading} className={`${base} ${sz[size]} ${va[variant]} ${className}`}>{loading?<span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"/>:children}</button>;
 };
 
-const Inp = ({label,required,className='',...props}) => (
+const Inp=({label,required,className='',...props})=>(
   <div className={className}>
     {label&&<label className="block text-xs font-bold text-gray-500 mb-1">{label}{required&&<span className="text-pink-500 ml-0.5">*</span>}</label>}
     <input className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50" {...props}/>
   </div>
 );
 
-const Sel = ({label,required,children,className='',...props}) => (
+const Sel=({label,required,children,className='',...props})=>(
   <div className={className}>
     {label&&<label className="block text-xs font-bold text-gray-500 mb-1">{label}{required&&<span className="text-pink-500 ml-0.5">*</span>}</label>}
     <select className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 appearance-none" {...props}>{children}</select>
   </div>
 );
 
-const Modal = ({title,onClose,children,wide=false}) => (
+const Modal=({title,onClose,children,wide=false})=>(
   <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center fade-in" style={{background:'rgba(0,0,0,0.4)'}}>
     <div className={`bg-white w-full ${wide?'max-w-2xl':'max-w-lg'} rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[92vh] flex flex-col slide-up`}>
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-shrink-0">
@@ -124,32 +118,48 @@ const Modal = ({title,onClose,children,wide=false}) => (
   </div>
 );
 
-const StatusBadge = ({status, onChange}) => {
-  const s = STATUS_STYLE[status]||STATUS_STYLE.Pending;
-  return (
+const StatusBadge=({status,onChange})=>{
+  const s=STATUS_STYLE[status]||STATUS_STYLE.Pending;
+  return(
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-black ${s.bg} ${s.text}`}>
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`}/>
       {onChange
-        ? <select value={status} onChange={e=>{e.stopPropagation();onChange(e.target.value)}} onClick={e=>e.stopPropagation()} className={`status-sel ${s.bg} ${s.text}`}>
-            {STATUSES.map(x=><option key={x} value={x}>{x}</option>)}
+        ?<select value={status} onChange={e=>{e.stopPropagation();onChange(e.target.value)}} onClick={e=>e.stopPropagation()} className={`status-sel ${s.bg} ${s.text}`}>
+            {ORDER_STATUSES.map(x=><option key={x}>{x}</option>)}
           </select>
-        : status}
+        :status}
     </span>
   );
 };
 
-const StatBox = ({label,value,sub,color='pink'}) => {
-  const gr={pink:'from-pink-500 to-rose-500',violet:'from-violet-500 to-purple-600',green:'from-emerald-500 to-green-600',amber:'from-amber-400 to-orange-500',blue:'from-blue-500 to-indigo-500',gray:'from-gray-500 to-gray-700'};
-  return (
+const PayBadge=({status,onChange})=>{
+  const paid=status==='Paid';
+  return(
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-black cursor-pointer ${paid?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-600'}`}
+      onClick={()=>onChange&&onChange(paid?'Unpaid':'Paid')}>
+      {paid?'✓ Paid':'⏳ Unpaid'}
+    </span>
+  );
+};
+
+const StatBox=({label,value,sub,color='pink'})=>{
+  const gr={pink:'from-pink-500 to-rose-500',violet:'from-violet-500 to-purple-600',green:'from-emerald-500 to-green-600',amber:'from-amber-400 to-orange-500',blue:'from-blue-500 to-indigo-500',gray:'from-gray-400 to-gray-600'};
+  return(
     <div className={`bg-gradient-to-br ${gr[color]} rounded-2xl p-4 text-white shadow-sm`}>
       <p className="text-xs font-semibold opacity-70 mb-0.5">{label}</p>
-      <p className="text-xl font-black">{value}</p>
+      <p className="text-lg font-black leading-tight">{value}</p>
       {sub&&<p className="text-xs opacity-60 mt-0.5">{sub}</p>}
     </div>
   );
 };
 
-const Empty = ({icon,title,sub,action}) => (
+const Card=({children,className=''})=><div className={`bg-white rounded-2xl border border-pink-50 shadow-sm ${className}`}>{children}</div>;
+const TblWrap=({children})=>(
+  <div className="bg-white rounded-2xl border border-pink-50 shadow-sm overflow-hidden">
+    <div className="overflow-x-auto"><table className="tbl">{children}</table></div>
+  </div>
+);
+const Empty=({icon,title,sub,action})=>(
   <div className="flex flex-col items-center justify-center py-16 text-center">
     <div className="text-4xl mb-3">{icon}</div>
     <p className="font-bold text-gray-600 mb-1">{title}</p>
@@ -157,105 +167,75 @@ const Empty = ({icon,title,sub,action}) => (
     {action}
   </div>
 );
-
-const Card = ({children,className=''}) => <div className={`bg-white rounded-2xl border border-pink-50 shadow-sm ${className}`}>{children}</div>;
-
-const TblWrap = ({children}) => (
-  <div className="bg-white rounded-2xl border border-pink-50 shadow-sm overflow-hidden">
-    <div className="overflow-x-auto"><table className="tbl">{children}</table></div>
-  </div>
-);
-
-const Spinner = () => (
+const Spinner=()=>(
   <div className="flex items-center justify-center h-40">
     <div className="w-8 h-8 border-4 border-pink-200 border-t-pink-500 rounded-full animate-spin"/>
   </div>
 );
 
-// ══════════════════════════════════════════════════════════════
-// APP SHELL
-// ══════════════════════════════════════════════════════════════
-const PAGES = [
+// ── PAGES CONFIG ─────────────────────────────────────────────
+const PAGES=[
   {key:'dashboard', label:'Dashboard', icon:'▦'},
   {key:'orders',    label:'Orders',    icon:'≡'},
+  {key:'customers', label:'Customers', icon:'♟'},
   {key:'catalog',   label:'Catalog',   icon:'⊞'},
-  {key:'inventory', label:'Stock',     icon:'◫'},
-  {key:'expenses',  label:'Expenses',  icon:'$'},
+  {key:'procurement',label:'Buy List', icon:'🛒'},
+  {key:'finance',   label:'Finance',   icon:'₩'},
   {key:'settings',  label:'Settings',  icon:'⚙'},
 ];
 
+// ── APP ───────────────────────────────────────────────────────
 function App() {
-  const [page,     setPage]     = useState('dashboard');
-  const [catalog,  setCatalog]  = useState([]);
-  const [orders,   setOrders]   = useState([]);
-  const [inventory,setInventory]= useState([]);
-  const [expenses, setExpenses] = useState([]);
-  const [settings, setSettings] = useState(() => lsGet('settings', {shippingRateKRW:15000, uzsPerKrw:8, salespersons:['Amir','Zara','Dina','Kamol','Sher']}));
-  const [loading,  setLoading]  = useState(true);
-  const [toast,    setToast]    = useState({msg:'',type:'success'});
+  const [page,       setPage]       = useState('dashboard');
+  const [catalog,    setCatalog]    = useState([]);
+  const [customers,  setCustomers]  = useState([]);
+  const [orders,     setOrders]     = useState([]);
+  const [orderItems, setOrderItems] = useState([]);
+  const [expenses,   setExpenses]   = useState([]);
+  const [transfers,  setTransfers]  = useState([]);
+  const [capital,    setCapital]    = useState([]);
+  const [settings,   setSettings]   = useState(()=>lsGet('settings',{shippingRateKRW:15000,uzsPerKrw:8,salespersons:['Nazokat','Namuna','Oybek','OJ']}));
+  const [loading,    setLoading]    = useState(true);
+  const [toast,      setToast]      = useState({msg:'',type:'success'});
   const toastRef = useRef(null);
 
-  const notify = (msg, type='success') => {
+  const notify=(msg,type='success')=>{
     clearTimeout(toastRef.current);
     setToast({msg,type});
-    toastRef.current = setTimeout(()=>setToast({msg:'',type:'success'}), 2600);
+    toastRef.current=setTimeout(()=>setToast({msg:'',type:'success'}),2800);
   };
 
-  // ── LOAD ALL DATA ────────────────────────────────────────────
   useEffect(()=>{
     (async()=>{
-      try {
-        const [c,o,inv,e] = await Promise.all([
+      try{
+        const [ca,cu,or,oi,ex,tr,cp]=await Promise.all([
           db.from('catalog').select('*').order('brand'),
+          db.from('customers').select('*').order('name'),
           db.from('orders').select('*').order('created_at',{ascending:false}),
-          db.from('inventory').select('*'),
+          db.from('order_items').select('*'),
           db.from('expenses').select('*').order('date',{ascending:false}),
+          db.from('transfers').select('*').order('date',{ascending:false}),
+          db.from('capital').select('*').order('date',{ascending:false}),
         ]);
-        if(c.error||o.error||inv.error||e.error) throw new Error('Load failed');
-        setCatalog(c.data.map(fromDB.catalog));
-        setOrders(o.data.map(fromDB.order));
-        setInventory(inv.data.map(fromDB.inv));
-        setExpenses(e.data.map(fromDB.expense));
-      } catch(err) {
-        notify('Could not connect to database. Check Supabase keys.','error');
-      } finally { setLoading(false); }
+        if(ca.error||cu.error||or.error||oi.error) throw new Error('Load failed');
+        setCatalog(ca.data.map(fromDB.catalog));
+        setCustomers(cu.data.map(fromDB.customer));
+        setOrders(or.data.map(fromDB.order));
+        setOrderItems(oi.data.map(fromDB.orderItem));
+        setExpenses((ex.data||[]).map(fromDB.expense));
+        setTransfers((tr.data||[]).map(fromDB.transfer));
+        setCapital((cp.data||[]).map(fromDB.capital));
+      }catch(err){
+        notify('Could not connect to database.','error');
+      }finally{setLoading(false);}
     })();
   },[]);
 
-  useEffect(()=>{ lsSet('settings',settings); },[settings]);
+  useEffect(()=>{lsSet('settings',settings);},[settings]);
 
-  // ── ORDER STATUS UPDATE ──────────────────────────────────────
-  const updateOrderStatus = async (orderId, newStatus, oldStatus) => {
-    const {error} = await db.from('orders').update({status:newStatus}).eq('id',orderId);
-    if(error) return notify('Update failed','error');
-    setOrders(prev => prev.map(o => o.id===orderId ? {...o,status:newStatus} : o));
+  const ctx={catalog,setCatalog,customers,setCustomers,orders,setOrders,orderItems,setOrderItems,expenses,setExpenses,transfers,setTransfers,capital,setCapital,settings,setSettings,notify};
 
-    // Inventory logic: Pending→Purchased = add stock; Purchased→Pending = remove stock
-    const order = orders.find(o=>o.id===orderId);
-    if(!order?.productId) return;
-
-    if(newStatus==='Purchased' && oldStatus!=='Purchased') {
-      await upsertInventory(order.productId, order.quantity);
-    } else if(oldStatus==='Purchased' && newStatus==='Pending') {
-      await upsertInventory(order.productId, -order.quantity);
-    }
-    notify(`Status → ${newStatus}`);
-  };
-
-  const upsertInventory = async (productId, delta) => {
-    const existing = inventory.find(i=>i.productId===productId);
-    const newQty   = Math.max(0, (existing?.quantity||0) + delta);
-    const {data,error} = await db.from('inventory').upsert({product_id:productId,quantity:newQty,updated_at:new Date().toISOString()},{onConflict:'product_id'}).select().single();
-    if(!error && data) setInventory(prev => {
-      const exists = prev.find(i=>i.productId===productId);
-      const updated = fromDB.inv(data);
-      return exists ? prev.map(i=>i.productId===productId?updated:i) : [...prev,updated];
-    });
-  };
-
-  const ctx = { catalog,setCatalog, orders,setOrders, inventory,setInventory, expenses,setExpenses, settings,setSettings, notify, updateOrderStatus, upsertInventory };
-
-  if(loading) return (
+  if(loading) return(
     <div className="min-h-screen flex flex-col items-center justify-center gap-4" style={{background:'#fdf2f8'}}>
       <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white font-black text-2xl shadow-lg">M</div>
       <div className="w-8 h-8 border-4 border-pink-200 border-t-pink-500 rounded-full animate-spin"/>
@@ -263,15 +243,13 @@ function App() {
     </div>
   );
 
-  return (
+  return(
     <div className="min-h-screen" style={{background:'#fdf2f8'}}>
       <Toast msg={toast.msg} type={toast.type}/>
-
-      {/* ── HEADER ── */}
       <header className="bg-white border-b border-pink-100 sticky top-0 z-30 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 h-12 flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 h-12 flex items-center gap-3">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white font-black text-xs shadow-sm flex-shrink-0">M</div>
-          <span className="font-black text-gray-800 text-sm hidden xs:block">Muna Manager</span>
+          <span className="font-black text-gray-800 text-sm hidden sm:block">Muna Manager</span>
           <nav className="flex gap-0.5 ml-2 overflow-x-auto">
             {PAGES.map(p=>(
               <button key={p.key} onClick={()=>setPage(p.key)}
@@ -282,83 +260,70 @@ function App() {
           </nav>
         </div>
       </header>
-
-      {/* ── CONTENT ── */}
-      <main className="max-w-6xl mx-auto px-4 py-4 pb-6">
-        {page==='dashboard' && <DashboardPage  {...ctx}/>}
-        {page==='orders'    && <OrdersPage     {...ctx}/>}
-        {page==='catalog'   && <CatalogPage    {...ctx}/>}
-        {page==='inventory' && <InventoryPage  {...ctx}/>}
-        {page==='expenses'  && <ExpensesPage   {...ctx}/>}
-        {page==='settings'  && <SettingsPage   {...ctx}/>}
+      <main className="max-w-7xl mx-auto px-4 py-4 pb-8">
+        {page==='dashboard'   && <DashboardPage   {...ctx}/>}
+        {page==='orders'      && <OrdersPage       {...ctx}/>}
+        {page==='customers'   && <CustomersPage    {...ctx}/>}
+        {page==='catalog'     && <CatalogPage      {...ctx}/>}
+        {page==='procurement' && <ProcurementPage  {...ctx}/>}
+        {page==='finance'     && <FinancePage      {...ctx}/>}
+        {page==='settings'    && <SettingsPage     {...ctx}/>}
       </main>
     </div>
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// DASHBOARD
-// ══════════════════════════════════════════════════════════════
-function DashboardPage({orders,catalog,expenses,settings}) {
-  const stats = useMemo(()=>{
-    const byStatus = Object.fromEntries(STATUSES.map(s=>[s,orders.filter(o=>o.status===s)]));
-    const paidOrders   = byStatus.Paid||[];
-    const totalRevUZS  = paidOrders.reduce((s,o)=>s+(+o.priceUZS||0)*o.quantity,0);
-
-    const totalCostKRW = orders.reduce((s,o)=>{
-      const p = catalog.find(c=>c.id===o.productId);
-      if(!p) return s;
-      const shipping = (p.weightGrams/1000)*(+settings.shippingRateKRW||15000);
-      return s + ((+p.estimatedCostKRW||0) + shipping)*(+o.quantity||1);
-    },0);
-    const totalCostUZS = totalCostKRW * (+settings.uzsPerKrw||8);
-    const estimProfit  = totalRevUZS - totalCostUZS;
-    const totalExpKRW  = expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
-    const totalExpUZS  = totalExpKRW * (+settings.uzsPerKrw||8);
-    const netProfit    = estimProfit - totalExpUZS;
-
+// ── DASHBOARD ─────────────────────────────────────────────────
+function DashboardPage({orders,orderItems,customers,catalog,expenses,transfers,capital,settings}) {
+  const rate=+settings.uzsPerKrw||8;
+  const stats=useMemo(()=>{
+    const paidOrders=orders.filter(o=>o.paymentStatus==='Paid');
+    const paidOrderIds=new Set(paidOrders.map(o=>o.id));
+    const revenueUZS=orderItems.filter(i=>paidOrderIds.has(i.orderId)).reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+    const totalExpKRW=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
+    const totalTransKRW=transfers.reduce((s,t)=>s+(+t.amountKRW||0),0);
+    const totalCapUZS=capital.reduce((s,c)=>s+(+c.amountUZS||0),0);
+    const costUZS=(totalExpKRW+totalTransKRW)*rate;
+    const profit=revenueUZS-costUZS;
+    const byStatus=Object.fromEntries(ORDER_STATUSES.map(s=>[s,orders.filter(o=>o.status===s).length]));
+    const unpaidCount=orders.filter(o=>o.paymentStatus==='Unpaid'&&o.status!=='Posted').length;
     // Top products
-    const prodQty = {};
-    orders.forEach(o=>{ if(o.productId) prodQty[o.productId]=(prodQty[o.productId]||0)+(+o.quantity||1); });
-    const topProducts = Object.entries(prodQty).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([id,qty])=>{
-      const p = catalog.find(c=>c.id===id);
-      return {name:p?`${p.brand} ${p.name}`:'Unknown',qty};
+    const qty={};
+    orderItems.forEach(i=>{if(i.productId)qty[i.productId]=(qty[i.productId]||0)+(+i.quantity||1);});
+    const topProducts=Object.entries(qty).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([id,q])=>{
+      const p=catalog.find(c=>c.id===id);
+      return{name:p?`${p.brand} ${p.name}`:'Unknown',qty:q};
     });
+    return{revenueUZS,profit,totalExpKRW,totalCapUZS,byStatus,unpaidCount,topProducts};
+  },[orders,orderItems,expenses,transfers,capital,catalog,rate]);
 
-    return {byStatus,totalRevUZS,netProfit,topProducts,totalExpUZS};
-  },[orders,catalog,expenses,settings]);
-
-  const total = orders.length;
-  const pipelineTotal = total||1;
-
-  return (
+  const total=orders.length||1;
+  return(
     <div className="space-y-5 slide-up">
       <h2 className="font-black text-gray-800 text-xl">Dashboard</h2>
-
-      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatBox label="Total Orders"    value={fmtNum(total)}                      sub="All time"            color="pink"/>
-        <StatBox label="Total Revenue"   value={fmtUZS(stats.totalRevUZS)}          sub="Paid orders"         color="green"/>
-        <StatBox label="Net Profit (est)"value={fmtUZS(stats.netProfit)}            sub="Revenue − costs"     color={stats.netProfit>=0?'violet':'amber'}/>
-        <StatBox label="Total Expenses"  value={fmtKRW(expenses.reduce((s,e)=>s+(+e.amountKRW||0),0))}  sub="Salary, cargo, etc." color="gray"/>
+        <StatBox label="Total Orders"    value={fmtNum(orders.length)}        sub="All time"           color="pink"/>
+        <StatBox label="Revenue (Paid)"  value={fmtUZS(stats.revenueUZS)}    sub="Paid orders"        color="green"/>
+        <StatBox label="Est. Profit"     value={fmtUZS(stats.profit)}         sub="Revenue − costs"    color={stats.profit>=0?'violet':'amber'}/>
+        <StatBox label="Unpaid Orders"   value={stats.unpaidCount}            sub="Need collection"    color={stats.unpaidCount>0?'amber':'gray'}/>
       </div>
 
       {/* Pipeline */}
       <Card className="p-4">
         <h3 className="font-extrabold text-gray-700 mb-3">Order Pipeline</h3>
-        <div className="pipeline-bar mb-3">
-          {STATUSES.map(s=>{
-            const cnt=(stats.byStatus[s]||[]).length;
-            const pct=Math.max(2,(cnt/pipelineTotal)*100);
-            const col={Pending:'#fbbf24',Purchased:'#60a5fa',Shipped:'#a78bfa',Delivered:'#34d399',Paid:'#f472b6'};
-            return <div key={s} style={{width:`${pct}%`,background:col[s],minWidth:cnt?'8px':'0'}} title={`${s}: ${cnt}`}/>;
+        <div className="flex gap-2 border-radius overflow-hidden h-2 rounded-full mb-3 bg-gray-100">
+          {ORDER_STATUSES.map(s=>{
+            const cnt=stats.byStatus[s]||0;
+            const pct=Math.max(0,(cnt/total)*100);
+            const col={Pending:'#fbbf24',Purchased:'#60a5fa',Shipped:'#a78bfa',Delivered:'#34d399',Posted:'#f472b6'};
+            return pct>0?<div key={s} style={{width:`${pct}%`,background:col[s]}} title={`${s}: ${cnt}`} className="h-2"/>:null;
           })}
         </div>
         <div className="grid grid-cols-5 gap-2 text-center">
-          {STATUSES.map(s=>{
-            const cnt=(stats.byStatus[s]||[]).length;
+          {ORDER_STATUSES.map(s=>{
+            const cnt=stats.byStatus[s]||0;
             const st=STATUS_STYLE[s];
-            return (
+            return(
               <div key={s} className={`${st.bg} rounded-xl p-2`}>
                 <p className={`text-xl font-black ${st.text}`}>{cnt}</p>
                 <p className={`text-xs font-bold ${st.text} opacity-70`}>{s}</p>
@@ -369,47 +334,45 @@ function DashboardPage({orders,catalog,expenses,settings}) {
       </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Top Products */}
         <Card className="p-4">
           <h3 className="font-extrabold text-gray-700 mb-3">Top Products</h3>
-          {stats.topProducts.length===0
-            ? <p className="text-sm text-gray-400">No orders yet</p>
-            : <div className="space-y-2">
-                {stats.topProducts.map((p,i)=>(
-                  <div key={i} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-5 h-5 rounded-lg bg-pink-100 text-pink-600 text-xs font-black flex items-center justify-center flex-shrink-0">{i+1}</span>
-                      <span className="text-sm font-semibold text-gray-700 truncate">{p.name}</span>
-                    </div>
-                    <span className="text-sm font-black text-gray-800 ml-2">{p.qty} pcs</span>
+          {stats.topProducts.length===0?<p className="text-sm text-gray-400">No orders yet</p>
+            :<div className="space-y-2">
+              {stats.topProducts.map((p,i)=>(
+                <div key={i} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-5 h-5 rounded-lg bg-pink-100 text-pink-600 text-xs font-black flex items-center justify-center flex-shrink-0">{i+1}</span>
+                    <span className="text-sm font-semibold text-gray-700 truncate">{p.name}</span>
                   </div>
-                ))}
-              </div>
+                  <span className="text-sm font-black text-gray-800 ml-2 flex-shrink-0">{p.qty} pcs</span>
+                </div>
+              ))}
+            </div>
           }
         </Card>
-
-        {/* Recent Orders */}
         <Card className="p-4">
           <h3 className="font-extrabold text-gray-700 mb-3">Recent Orders</h3>
-          {orders.length===0
-            ? <p className="text-sm text-gray-400">No orders yet</p>
-            : <div className="space-y-2">
-                {orders.slice(0,6).map(o=>{
-                  const p=catalog.find(c=>c.id===o.productId);
-                  return (
-                    <div key={o.id} className="flex items-center justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-gray-800 truncate">{o.customerName}</p>
-                        <p className="text-xs text-gray-400 truncate">{p?`${p.brand} ${p.name}`:'—'}</p>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <StatusBadge status={o.status}/>
-                        <span className="text-xs font-bold text-gray-700">{fmtUZS(o.priceUZS)}</span>
-                      </div>
+          {orders.length===0?<p className="text-sm text-gray-400">No orders yet</p>
+            :<div className="space-y-2">
+              {orders.slice(0,6).map(o=>{
+                const c=customers.find(x=>x.id===o.customerId);
+                const items=orderItems.filter(i=>i.orderId===o.id);
+                const total=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+                return(
+                  <div key={o.id} className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-gray-800 truncate">{c?.name||'—'}</p>
+                      <p className="text-xs text-gray-400">{items.length} item{items.length!==1?'s':''}</p>
                     </div>
-                  );
-                })}
-              </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <StatusBadge status={o.status}/>
+                      <PayBadge status={o.paymentStatus}/>
+                      <span className="text-xs font-bold text-gray-700">{fmtUZS(total)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           }
         </Card>
       </div>
@@ -417,176 +380,165 @@ function DashboardPage({orders,catalog,expenses,settings}) {
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// ORDERS PAGE
-// ══════════════════════════════════════════════════════════════
-function OrdersPage({orders,setOrders,catalog,settings,notify,updateOrderStatus}) {
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [search,       setSearch]       = useState('');
-  const [showForm,     setShowForm]     = useState(false);
-  const [editOrder,    setEditOrder]    = useState(null);
-  const [saving,       setSaving]       = useState(false);
+// ── ORDERS PAGE ───────────────────────────────────────────────
+function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,catalog,settings,notify}) {
+  const [statusFilter,setStatusFilter]=useState('All');
+  const [payFilter,   setPayFilter]   =useState('All');
+  const [search,      setSearch]      =useState('');
+  const [showForm,    setShowForm]    =useState(false);
+  const [editOrder,   setEditOrder]   =useState(null);
+  const [saving,      setSaving]      =useState(false);
 
-  const salespersons = settings.salespersons||[];
-
-  const filtered = useMemo(()=>{
-    let list = statusFilter==='All' ? orders : orders.filter(o=>o.status===statusFilter);
-    if(search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(o=>{
-        const p = catalog.find(c=>c.id===o.productId);
-        return o.customerName.toLowerCase().includes(q) || (p&&(`${p.brand} ${p.name}`).toLowerCase().includes(q));
+  const filtered=useMemo(()=>{
+    let list=statusFilter==='All'?orders:orders.filter(o=>o.status===statusFilter);
+    if(payFilter!=='All') list=list.filter(o=>o.paymentStatus===payFilter);
+    if(search.trim()){
+      const q=search.toLowerCase();
+      list=list.filter(o=>{
+        const c=customers.find(x=>x.id===o.customerId);
+        return c?.name.toLowerCase().includes(q)||c?.phone?.includes(q)||c?.telegram?.toLowerCase().includes(q);
       });
     }
     return list;
-  },[orders,statusFilter,search,catalog]);
+  },[orders,statusFilter,payFilter,search,customers]);
 
-  const saveOrder = async(data) => {
+  const updateStatus=async(orderId,newStatus)=>{
+    const{error}=await db.from('orders').update({status:newStatus}).eq('id',orderId);
+    if(error) return notify('Update failed','error');
+    setOrders(prev=>prev.map(o=>o.id===orderId?{...o,status:newStatus}:o));
+    notify(`Status → ${newStatus}`);
+  };
+
+  const updatePayment=async(orderId,newPay)=>{
+    const{error}=await db.from('orders').update({payment_status:newPay}).eq('id',orderId);
+    if(error) return notify('Update failed','error');
+    setOrders(prev=>prev.map(o=>o.id===orderId?{...o,paymentStatus:newPay}:o));
+    notify(newPay==='Paid'?'Payment received ✓':'Marked unpaid');
+  };
+
+  const saveOrder=async(orderData,items)=>{
     setSaving(true);
-    try {
-      if(editOrder) {
-        const {error} = await db.from('orders').update(toDB.order(data)).eq('id',editOrder.id);
+    try{
+      if(editOrder){
+        const{error}=await db.from('orders').update(toDB.order(orderData)).eq('id',editOrder.id);
         if(error) throw error;
-        setOrders(prev=>prev.map(o=>o.id===editOrder.id?{...o,...data}:o));
+        // Replace items
+        await db.from('order_items').delete().eq('order_id',editOrder.id);
+        const newItems=items.map(i=>({...toDB.orderItem(i),order_id:editOrder.id}));
+        const{data:nd,error:ie}=await db.from('order_items').insert(newItems).select();
+        if(ie) throw ie;
+        setOrders(prev=>prev.map(o=>o.id===editOrder.id?{...o,...orderData}:o));
+        setOrderItems(prev=>[...prev.filter(i=>i.orderId!==editOrder.id),...nd.map(fromDB.orderItem)]);
         notify('Order updated ✓');
       } else {
-        const {data:nd,error} = await db.from('orders').insert(toDB.order(data)).select().single();
-        if(error) throw error;
-        setOrders(prev=>[fromDB.order(nd),...prev]);
+        const{data:od,error:oe}=await db.from('orders').insert(toDB.order(orderData)).select().single();
+        if(oe) throw oe;
+        const newItems=items.map(i=>({...toDB.orderItem(i),order_id:od.id}));
+        const{data:id,error:ie}=await db.from('order_items').insert(newItems).select();
+        if(ie) throw ie;
+        setOrders(prev=>[fromDB.order(od),...prev]);
+        setOrderItems(prev=>[...prev,...id.map(fromDB.orderItem)]);
         notify('Order created ✓');
       }
       setShowForm(false); setEditOrder(null);
-    } catch(e){ notify('Save failed: '+e.message,'error'); }
-    finally{ setSaving(false); }
+    }catch(e){notify('Save failed: '+e.message,'error');}
+    finally{setSaving(false);}
   };
 
-  const deleteOrder = async(id) => {
+  const deleteOrder=async(id)=>{
     if(!confirm('Delete this order?')) return;
-    const {error} = await db.from('orders').delete().eq('id',id);
+    await db.from('order_items').delete().eq('order_id',id);
+    const{error}=await db.from('orders').delete().eq('id',id);
     if(error) return notify('Delete failed','error');
     setOrders(prev=>prev.filter(o=>o.id!==id));
+    setOrderItems(prev=>prev.filter(i=>i.orderId!==id));
     notify('Order deleted');
   };
 
-  // Procurement: group pending orders for purchase list
-  const procurementList = useMemo(()=>{
-    const pending = orders.filter(o=>o.status==='Pending');
-    const groups  = {};
-    pending.forEach(o=>{
-      const key = o.productId||'unknown';
-      if(!groups[key]) { const p=catalog.find(c=>c.id===o.productId); groups[key]={product:p,orders:[],totalQty:0}; }
-      groups[key].orders.push(o);
-      groups[key].totalQty += +o.quantity||1;
-    });
-    return Object.values(groups);
-  },[orders,catalog]);
-
-  const markAllPurchased = async() => {
-    const pendingIds = orders.filter(o=>o.status==='Pending').map(o=>o.id);
-    if(!pendingIds.length) return;
-    if(!confirm(`Mark ${pendingIds.length} pending orders as Purchased?`)) return;
-    const {error} = await db.from('orders').update({status:'Purchased'}).in('id',pendingIds);
-    if(error) return notify('Update failed','error');
-    for(const id of pendingIds) {
-      const o = orders.find(x=>x.id===id);
-      if(o?.productId) await updateOrderStatus(id,'Purchased',o.status);
-    }
-    setOrders(prev=>prev.map(o=>pendingIds.includes(o.id)?{...o,status:'Purchased'}:o));
-    notify(`${pendingIds.length} orders marked as Purchased ✓`);
-  };
-
-  return (
+  return(
     <div className="space-y-4 slide-up">
-      {/* Top bar */}
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-black text-gray-800 text-xl flex-1">Orders</h2>
-        {procurementList.length>0&&(
-          <Btn size="sm" variant="outline" onClick={markAllPurchased}>🛒 Mark Pending as Purchased ({orders.filter(o=>o.status==='Pending').length})</Btn>
-        )}
         <Btn size="sm" onClick={()=>{setEditOrder(null);setShowForm(true);}}>+ New Order</Btn>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-2 items-center">
+      <div className="flex flex-wrap gap-2">
         <div className="flex gap-1 overflow-x-auto">
-          {['All',...STATUSES].map(s=>{
-            const cnt = s==='All'?orders.length:orders.filter(o=>o.status===s).length;
-            return (
+          {['All',...ORDER_STATUSES].map(s=>{
+            const cnt=s==='All'?orders.length:orders.filter(o=>o.status===s).length;
+            return(
               <button key={s} onClick={()=>setStatusFilter(s)}
                 className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-bold transition-all ${statusFilter===s?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200 hover:border-pink-300'}`}>
-                {s} <span className="opacity-70">({cnt})</span>
+                {s} ({cnt})
               </button>
             );
           })}
         </div>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search customer or product…"
-          className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm bg-white ml-auto w-52"/>
+        <div className="flex gap-1">
+          {['All','Unpaid','Paid'].map(p=>(
+            <button key={p} onClick={()=>setPayFilter(p)}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${payFilter===p?'bg-emerald-500 text-white':'bg-white text-gray-500 border border-gray-200'}`}>
+              {p}
+            </button>
+          ))}
+        </div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search customer…"
+          className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm bg-white ml-auto w-48"/>
       </div>
 
-      {/* Procurement Summary (only when filtered to Pending) */}
-      {statusFilter==='Pending' && procurementList.length>0 && (
-        <Card className="p-4">
-          <h3 className="font-extrabold text-gray-700 mb-3">🛒 Purchase List</h3>
-          <TblWrap>
-            <thead><tr>
-              <th>Brand</th><th>Product</th><th>Total Qty</th><th>Est. Cost (KRW)</th><th>Orders</th>
-            </tr></thead>
-            <tbody>
-              {procurementList.map((g,i)=>(
-                <tr key={i}>
-                  <td className="font-semibold text-gray-700">{g.product?.brand||'—'}</td>
-                  <td className="text-gray-800">{g.product?.name||'Unknown product'}</td>
-                  <td className="font-black text-pink-600">{g.totalQty}</td>
-                  <td>{g.product?fmtKRW(((+g.product.estimatedCostKRW||0)+(g.product.weightGrams/1000)*(+settings.shippingRateKRW||15000))*g.totalQty):'—'}</td>
-                  <td className="text-gray-400">{g.orders.length} order{g.orders.length!==1?'s':''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </TblWrap>
-        </Card>
-      )}
-
-      {/* Orders Table */}
       {filtered.length===0
-        ? <Empty icon="📋" title="No orders found" sub="Create your first order or change the filter" action={<Btn onClick={()=>setShowForm(true)}>+ New Order</Btn>}/>
-        : <TblWrap>
-            <thead><tr>
-              <th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Price (UZS)</th><th>Type</th><th>Status</th><th>Sales</th><th></th>
-            </tr></thead>
-            <tbody>
-              {filtered.map(o=>{
-                const p = catalog.find(c=>c.id===o.productId);
-                return (
-                  <tr key={o.id}>
-                    <td className="text-gray-400 text-xs">{fmtDate(o.createdAt)}</td>
-                    <td className="font-semibold text-gray-800">{o.customerName}</td>
-                    <td className="text-gray-700 max-w-[180px]">
-                      {p ? <span className="truncate block" title={`${p.brand} ${p.name}`}><span className="text-xs text-pink-500 font-bold">{p.brand}</span> {p.name}</span> : <span className="text-gray-400 italic">No product</span>}
-                    </td>
-                    <td className="font-bold text-center">{o.quantity}</td>
-                    <td className="font-bold text-gray-800">{fmtUZS(o.priceUZS)}</td>
-                    <td><span className={`text-xs px-2 py-0.5 rounded-full font-bold ${o.type==='B2B'?'bg-indigo-100 text-indigo-700':'bg-rose-100 text-rose-700'}`}>{o.type}</span></td>
-                    <td><StatusBadge status={o.status} onChange={ns=>updateOrderStatus(o.id,ns,o.status)}/></td>
-                    <td className="text-gray-500 text-xs">{o.salesperson||'—'}</td>
-                    <td>
-                      <div className="flex gap-1">
-                        <Btn size="xs" variant="ghost" onClick={()=>{setEditOrder(o);setShowForm(true);}}>✎</Btn>
-                        <Btn size="xs" variant="danger" onClick={()=>deleteOrder(o.id)}>✕</Btn>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </TblWrap>
+        ?<Empty icon="📋" title="No orders found" sub="Create your first order" action={<Btn onClick={()=>setShowForm(true)}>+ New Order</Btn>}/>
+        :<TblWrap>
+          <thead><tr>
+            <th>Date</th><th>Customer</th><th>Items</th><th>Total (UZS)</th><th>Status</th><th>Payment</th><th>Sales</th><th></th>
+          </tr></thead>
+          <tbody>
+            {filtered.map(o=>{
+              const c=customers.find(x=>x.id===o.customerId);
+              const items=orderItems.filter(i=>i.orderId===o.id);
+              const total=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+              return(
+                <tr key={o.id}>
+                  <td className="text-gray-400 text-xs whitespace-nowrap">{fmtDate(o.createdAt)}</td>
+                  <td>
+                    <p className="font-bold text-gray-800 text-sm">{c?.name||'—'}</p>
+                    <p className="text-xs text-gray-400">{c?.phone||c?.telegram||''}</p>
+                  </td>
+                  <td>
+                    <div className="space-y-0.5">
+                      {items.slice(0,2).map(i=>{
+                        const p=catalog.find(x=>x.id===i.productId);
+                        return<p key={i.id} className="text-xs text-gray-600 truncate max-w-[180px]">{i.quantity}× {p?p.name:'Unknown'}</p>;
+                      })}
+                      {items.length>2&&<p className="text-xs text-gray-400">+{items.length-2} more</p>}
+                    </div>
+                  </td>
+                  <td className="font-black text-gray-800">{fmtUZS(total)}</td>
+                  <td><StatusBadge status={o.status} onChange={ns=>updateStatus(o.id,ns)}/></td>
+                  <td><PayBadge status={o.paymentStatus} onChange={np=>updatePayment(o.id,np)}/></td>
+                  <td className="text-gray-500 text-xs">{o.salesperson||'—'}</td>
+                  <td>
+                    <div className="flex gap-1">
+                      <Btn size="xs" variant="ghost" onClick={()=>{setEditOrder(o);setShowForm(true);}}>✎</Btn>
+                      <Btn size="xs" variant="danger" onClick={()=>deleteOrder(o.id)}>✕</Btn>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </TblWrap>
       }
 
       {showForm&&(
         <OrderForm
           order={editOrder}
+          orderItems={editOrder?orderItems.filter(i=>i.orderId===editOrder.id):[]}
+          customers={customers}
           catalog={catalog}
-          salespersons={salespersons}
           settings={settings}
+          salespersons={settings.salespersons||[]}
           onSave={saveOrder}
           saving={saving}
           onClose={()=>{setShowForm(false);setEditOrder(null);}}
@@ -596,178 +548,318 @@ function OrdersPage({orders,setOrders,catalog,settings,notify,updateOrderStatus}
   );
 }
 
-function OrderForm({order,catalog,salespersons,settings,onSave,onClose,saving}) {
-  const sp = salespersons?.length?salespersons:['—'];
-  const [form,setForm] = useState({
-    customerName: order?.customerName||'',
-    productId:    order?.productId||'',
-    quantity:     order?.quantity||1,
-    priceUZS:     order?.priceUZS||'',
-    type:         order?.type||'B2C',
-    status:       order?.status||'Pending',
-    salesperson:  order?.salesperson||sp[0]||'',
-    notes:        order?.notes||'',
+function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onSave,onClose,saving}) {
+  const sp=salespersons?.length?salespersons:['—'];
+  const [form,setForm]=useState({
+    customerId: order?.customerId||'',
+    status:     order?.status||'Pending',
+    paymentStatus: order?.paymentStatus||'Unpaid',
+    salesperson:order?.salesperson||sp[0]||'',
+    notes:      order?.notes||'',
   });
-  const [search, setSearch] = useState('');
+  const [items,setItems]=useState(orderItems?.length?orderItems:[{productId:'',quantity:1,priceUZS:'',type:'B2C'}]);
+  const [prodSearch,setProdSearch]=useState('');
+  const [activeItemIdx,setActiveItemIdx]=useState(null);
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
 
-  const f = (k,v)=>setForm(p=>({...p,[k]:v}));
-
-  // Auto-fill price when product or type changes
-  useEffect(()=>{
-    if(form.productId && !order) {
-      const p = catalog.find(c=>c.id===form.productId);
-      if(p) f('priceUZS', form.type==='B2B'?p.suggestedB2BPrice:p.suggestedB2CPrice);
+  const addItem=()=>setItems(p=>[...p,{productId:'',quantity:1,priceUZS:'',type:'B2C'}]);
+  const removeItem=idx=>setItems(p=>p.filter((_,i)=>i!==idx));
+  const updateItem=(idx,k,v)=>setItems(p=>p.map((it,i)=>{
+    if(i!==idx) return it;
+    const updated={...it,[k]:v};
+    if(k==='productId'||k==='type'){
+      const prod=catalog.find(c=>c.id===(k==='productId'?v:it.productId));
+      if(prod&&!order) updated.priceUZS=(k==='type'?v:updated.type)==='B2B'?prod.suggestedB2BPrice:prod.suggestedB2CPrice;
     }
-  },[form.productId,form.type]);
+    return updated;
+  }));
 
-  const filteredCatalog = useMemo(()=>{
-    if(!search.trim()) return catalog;
-    const q=search.toLowerCase();
-    return catalog.filter(p=>(`${p.brand} ${p.name}`).toLowerCase().includes(q)||p.category?.toLowerCase().includes(q));
-  },[catalog,search]);
+  const filteredCatalog=useMemo(()=>{
+    if(!prodSearch.trim()) return catalog.slice(0,20);
+    const q=prodSearch.toLowerCase();
+    return catalog.filter(p=>(`${p.brand} ${p.name}`).toLowerCase().includes(q)).slice(0,15);
+  },[catalog,prodSearch]);
 
-  const selectedProduct = catalog.find(c=>c.id===form.productId);
+  const orderTotal=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
 
   const submit=()=>{
-    if(!form.customerName.trim()) return alert('Customer name required.');
-    if(!form.priceUZS||+form.priceUZS<=0) return alert('Enter a price.');
-    onSave(form);
+    if(!form.customerId) return alert('Please select a customer.');
+    if(items.every(i=>!i.productId&&!i.priceUZS)) return alert('Add at least one item.');
+    const validItems=items.filter(i=>i.productId||i.priceUZS);
+    onSave(form,validItems);
   };
 
-  return (
-    <Modal title={order?'Edit Order':'New Order'} onClose={onClose} wide>
-      <div className="space-y-3">
-        <Inp label="Customer Name" required value={form.customerName} onChange={e=>f('customerName',e.target.value)} placeholder="e.g. Nilufar Karimova"/>
+  const selectedCustomer=customers.find(c=>c.id===form.customerId);
 
-        {/* Product Search */}
+  return(
+    <Modal title={order?'Edit Order':'New Order'} onClose={onClose} wide>
+      <div className="space-y-4">
+        {/* Customer */}
         <div>
-          <label className="block text-xs font-bold text-gray-500 mb-1">Product</label>
-          {selectedProduct
-            ? <div className="flex items-center gap-2 border border-pink-200 rounded-xl px-3 py-2 bg-pink-50">
-                <span className="text-sm font-bold text-gray-800 flex-1 truncate"><span className="text-pink-500">{selectedProduct.brand}</span> {selectedProduct.name}</span>
-                <button onClick={()=>{f('productId','');setSearch('');}} className="text-gray-400 hover:text-red-500 font-black text-lg leading-none">×</button>
-              </div>
-            : <div className="space-y-1.5">
-                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search product…" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50"/>
-                {search&&(
-                  <div className="border border-gray-200 rounded-xl bg-white shadow-lg max-h-44 overflow-y-auto">
-                    {filteredCatalog.length===0
-                      ? <p className="px-3 py-3 text-sm text-gray-400">No products found</p>
-                      : filteredCatalog.slice(0,12).map(p=>(
-                          <button key={p.id} onClick={()=>{f('productId',p.id);setSearch('');}}
-                            className="w-full text-left px-3 py-2 hover:bg-pink-50 text-sm border-b border-gray-100 last:border-0">
-                            <span className="font-bold text-pink-500">{p.brand}</span> {p.name}
-                            <span className="text-xs text-gray-400 ml-2">{p.category}</span>
-                          </button>
-                        ))
-                    }
-                  </div>
-                )}
-              </div>
+          <label className="block text-xs font-bold text-gray-500 mb-1">Customer <span className="text-pink-500">*</span></label>
+          {selectedCustomer
+            ?<div className="flex items-center gap-2 border border-pink-200 rounded-xl px-3 py-2 bg-pink-50">
+               <div className="flex-1">
+                 <p className="text-sm font-bold text-gray-800">{selectedCustomer.name}</p>
+                 <p className="text-xs text-gray-400">{selectedCustomer.phone||selectedCustomer.telegram} · {selectedCustomer.address}</p>
+               </div>
+               <button onClick={()=>f('customerId','')} className="text-gray-400 hover:text-red-500 font-black text-lg">×</button>
+             </div>
+            :<select value={form.customerId} onChange={e=>f('customerId',e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50">
+               <option value="">— Select customer —</option>
+               {customers.map(c=><option key={c.id} value={c.id}>{c.name} {c.phone?'· '+c.phone:''}</option>)}
+             </select>
           }
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
-          <Inp label="Quantity" required type="number" min="1" value={form.quantity} onChange={e=>f('quantity',e.target.value)} placeholder="1"/>
-          <Sel label="Type" value={form.type} onChange={e=>f('type',e.target.value)}>
-            <option>B2C</option><option>B2B</option>
-          </Sel>
-          <Sel label="Status" value={form.status} onChange={e=>f('status',e.target.value)}>
-            {STATUSES.map(s=><option key={s}>{s}</option>)}
-          </Sel>
+        {/* Order Items */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-bold text-gray-500">Products</label>
+            <Btn size="xs" variant="secondary" onClick={addItem}>+ Add Item</Btn>
+          </div>
+          <div className="space-y-2">
+            {items.map((item,idx)=>{
+              const prod=catalog.find(p=>p.id===item.productId);
+              const shipping=(prod?.weightGrams/1000)*(+settings?.shippingRateKRW||15000);
+              const cost=prod?(+prod.estimatedCostKRW+shipping)*(+settings?.uzsPerKrw||8):0;
+              const profit=(+item.priceUZS||0)*(+item.quantity||1)-cost*(+item.quantity||1);
+              return(
+                <div key={idx} className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50">
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1">
+                      {prod
+                        ?<div className="flex items-center gap-2 bg-pink-50 rounded-lg px-2 py-1.5">
+                           <span className="text-xs font-bold text-pink-600 flex-1 truncate">{prod.brand} · {prod.name}</span>
+                           <button onClick={()=>updateItem(idx,'productId','')} className="text-gray-400 hover:text-red-500 font-black text-sm">×</button>
+                         </div>
+                        :<div>
+                           <input value={activeItemIdx===idx?prodSearch:''} onFocus={()=>{setActiveItemIdx(idx);setProdSearch('');}}
+                             onChange={e=>setProdSearch(e.target.value)} placeholder="Search product…"
+                             className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white"/>
+                           {activeItemIdx===idx&&(
+                             <div className="border border-gray-200 rounded-xl bg-white shadow-lg max-h-36 overflow-y-auto mt-1 z-10 relative">
+                               {filteredCatalog.length===0?<p className="px-3 py-2 text-xs text-gray-400">No results</p>
+                                :filteredCatalog.map(p=>(
+                                  <button key={p.id} onClick={()=>{updateItem(idx,'productId',p.id);setActiveItemIdx(null);setProdSearch('');}}
+                                    className="w-full text-left px-3 py-1.5 hover:bg-pink-50 text-xs border-b border-gray-100 last:border-0">
+                                    <span className="font-bold text-pink-500">{p.brand}</span> {p.name}
+                                    <span className="text-gray-400 ml-1">{p.category}</span>
+                                  </button>
+                                ))
+                               }
+                             </div>
+                           )}
+                         </div>
+                      }
+                    </div>
+                    {items.length>1&&<button onClick={()=>removeItem(idx)} className="text-red-400 hover:text-red-600 font-black mt-1">✕</button>}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Inp label="Qty" type="number" min="1" value={item.quantity} onChange={e=>updateItem(idx,'quantity',e.target.value)}/>
+                    <Inp label="Price (UZS)" type="number" min="0" value={item.priceUZS} onChange={e=>updateItem(idx,'priceUZS',e.target.value)} placeholder="auto"/>
+                    <Sel label="Type" value={item.type} onChange={e=>updateItem(idx,'type',e.target.value)}>
+                      <option>B2C</option><option>B2B</option>
+                    </Sel>
+                  </div>
+                  {prod&&item.priceUZS&&(
+                    <p className={`text-xs font-bold ${profit>=0?'text-emerald-600':'text-red-500'}`}>
+                      Profit: {fmtUZS(profit)}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {orderTotal>0&&<div className="text-right mt-2"><span className="text-sm font-black text-gray-800">Order Total: {fmtUZS(orderTotal)}</span></div>}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Inp label="Price (UZS)" required type="number" min="0" value={form.priceUZS} onChange={e=>f('priceUZS',e.target.value)} placeholder="Auto-filled from catalog"/>
+        <div className="grid grid-cols-3 gap-3">
+          <Sel label="Status" value={form.status} onChange={e=>f('status',e.target.value)}>
+            {ORDER_STATUSES.map(s=><option key={s}>{s}</option>)}
+          </Sel>
+          <Sel label="Payment" value={form.paymentStatus} onChange={e=>f('paymentStatus',e.target.value)}>
+            <option>Unpaid</option><option>Paid</option>
+          </Sel>
           <Sel label="Salesperson" value={form.salesperson} onChange={e=>f('salesperson',e.target.value)}>
             {sp.map(s=><option key={s}>{s}</option>)}
           </Sel>
         </div>
 
-        {selectedProduct&&(()=>{
-          const shippingKRW = (selectedProduct.weightGrams/1000)*(+settings?.shippingRateKRW||15000);
-          const totalCostKRW = (+selectedProduct.estimatedCostKRW||0) + shippingKRW;
-          const profit = (+form.priceUZS||0) - totalCostKRW*(+settings?.uzsPerKrw||8);
-          return (
-            <div className="bg-pink-50 rounded-xl px-3 py-2 text-xs text-gray-600 grid grid-cols-4 gap-2">
-              <div><span className="font-bold text-gray-500">Product Cost</span><br/>{fmtKRW(selectedProduct.estimatedCostKRW)}</div>
-              <div><span className="font-bold text-gray-500">Shipping (auto)</span><br/>{fmtKRW(shippingKRW)}</div>
-              <div><span className="font-bold text-gray-500">Weight</span><br/>{selectedProduct.weightGrams}g</div>
-              <div><span className={`font-bold ${profit>=0?'text-green-600':'text-red-500'}`}>Est. Profit</span><br/><span className={profit>=0?'text-green-700':'text-red-600'}>{fmtUZS(profit)}</span></div>
-            </div>
-          );
-        })()}
-
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1">Notes</label>
-          <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 resize-none" placeholder="Optional…"/>
+          <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 resize-none" placeholder="e.g. 10% discount, gift wrap…"/>
         </div>
+
         <Btn size="lg" onClick={submit} loading={saving}>✓ Save Order</Btn>
       </div>
     </Modal>
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// CATALOG PAGE
-// ══════════════════════════════════════════════════════════════
-function CatalogPage({catalog,setCatalog,settings,notify}) {
-  const [search,    setSearch]    = useState('');
-  const [catFilter, setCatFilter] = useState('All');
-  const [showForm,  setShowForm]  = useState(false);
-  const [editProd,  setEditProd]  = useState(null);
-  const [saving,    setSaving]    = useState(false);
+// ── CUSTOMERS PAGE ────────────────────────────────────────────
+function CustomersPage({customers,setCustomers,orders,orderItems,notify}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editC,   setEditC]  =useState(null);
+  const [saving,  setSaving] =useState(false);
+  const [search,  setSearch] =useState('');
 
-  const filtered = useMemo(()=>{
-    let list = catFilter==='All'?catalog:catalog.filter(p=>p.category===catFilter);
-    if(search.trim()) {
-      const q=search.toLowerCase();
-      list=list.filter(p=>(`${p.brand} ${p.name}`).toLowerCase().includes(q)||p.category?.toLowerCase().includes(q)||p.notes?.toLowerCase().includes(q));
-    }
+  const filtered=useMemo(()=>{
+    if(!search.trim()) return customers;
+    const q=search.toLowerCase();
+    return customers.filter(c=>c.name.toLowerCase().includes(q)||c.phone?.includes(q)||c.telegram?.toLowerCase().includes(q)||c.address?.toLowerCase().includes(q));
+  },[customers,search]);
+
+  const save=async(data)=>{
+    setSaving(true);
+    try{
+      if(editC){
+        const{error}=await db.from('customers').update(toDB.customer(data)).eq('id',editC.id);
+        if(error) throw error;
+        setCustomers(prev=>prev.map(c=>c.id===editC.id?{...c,...data}:c));
+        notify('Customer updated ✓');
+      } else {
+        const{data:nd,error}=await db.from('customers').insert(toDB.customer(data)).select().single();
+        if(error) throw error;
+        setCustomers(prev=>[...prev,fromDB.customer(nd)].sort((a,b)=>a.name.localeCompare(b.name)));
+        notify('Customer added ✓');
+      }
+      setShowForm(false); setEditC(null);
+    }catch(e){notify('Save failed: '+e.message,'error');}
+    finally{setSaving(false);}
+  };
+
+  const del=async(id)=>{
+    if(!confirm('Delete this customer?')) return;
+    const{error}=await db.from('customers').delete().eq('id',id);
+    if(error) return notify('Delete failed','error');
+    setCustomers(prev=>prev.filter(c=>c.id!==id));
+    notify('Customer deleted');
+  };
+
+  return(
+    <div className="space-y-4 slide-up">
+      <div className="flex items-center gap-2">
+        <h2 className="font-black text-gray-800 text-xl flex-1">Customers <span className="text-gray-400 font-semibold text-sm">({customers.length})</span></h2>
+        <Btn size="sm" onClick={()=>{setEditC(null);setShowForm(true);}}>+ Add Customer</Btn>
+      </div>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, phone, address…"
+        className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white w-full max-w-sm"/>
+
+      {filtered.length===0
+        ?<Empty icon="👥" title="No customers yet" sub="Add your first customer" action={<Btn onClick={()=>setShowForm(true)}>+ Add Customer</Btn>}/>
+        :<TblWrap>
+          <thead><tr><th>Name</th><th>Telegram / Phone</th><th>Address</th><th>Orders</th><th>Total Spent</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map(c=>{
+              const custOrders=orders.filter(o=>o.customerId===c.id);
+              const custItems=orderItems.filter(i=>custOrders.some(o=>o.id===i.orderId));
+              const spent=custItems.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+              return(
+                <tr key={c.id}>
+                  <td className="font-bold text-gray-800">{c.name}</td>
+                  <td className="text-gray-600 text-sm">
+                    {c.telegram&&<p className="text-blue-500">@{c.telegram.replace('@','')}</p>}
+                    {c.phone&&<p>{c.phone}</p>}
+                  </td>
+                  <td className="text-gray-500 text-sm max-w-[200px]"><span className="truncate block">{c.address||'—'}</span></td>
+                  <td className="font-bold text-center text-gray-700">{custOrders.length}</td>
+                  <td className="font-bold text-emerald-600">{spent>0?fmtUZS(spent):'—'}</td>
+                  <td><div className="flex gap-1">
+                    <Btn size="xs" variant="ghost" onClick={()=>{setEditC(c);setShowForm(true);}}>✎</Btn>
+                    <Btn size="xs" variant="danger" onClick={()=>del(c.id)}>✕</Btn>
+                  </div></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </TblWrap>
+      }
+
+      {showForm&&(
+        <Modal title={editC?'Edit Customer':'New Customer'} onClose={()=>{setShowForm(false);setEditC(null);}}>
+          <CustomerForm customer={editC} onSave={save} saving={saving}/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function CustomerForm({customer,onSave,saving}) {
+  const [form,setForm]=useState({name:customer?.name||'',telegram:customer?.telegram||'',phone:customer?.phone||'',address:customer?.address||''});
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+  return(
+    <div className="space-y-3">
+      <Inp label="Full Name" required value={form.name} onChange={e=>f('name',e.target.value)} placeholder="e.g. Nilufar Karimova"/>
+      <div className="grid grid-cols-2 gap-3">
+        <Inp label="Telegram" value={form.telegram} onChange={e=>f('telegram',e.target.value)} placeholder="@username"/>
+        <Inp label="Phone" value={form.phone} onChange={e=>f('phone',e.target.value)} placeholder="+998 90 000 0000"/>
+      </div>
+      <div>
+        <label className="block text-xs font-bold text-gray-500 mb-1">Delivery Address</label>
+        <textarea value={form.address} onChange={e=>f('address',e.target.value)} rows={2}
+          className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 resize-none" placeholder="City, district, street…"/>
+      </div>
+      <Btn size="lg" onClick={()=>{if(!form.name.trim())return alert('Name required.');onSave(form);}} loading={saving}>✓ Save Customer</Btn>
+    </div>
+  );
+}
+
+// ── CATALOG PAGE ──────────────────────────────────────────────
+function CatalogPage({catalog,setCatalog,settings,notify}) {
+  const [search,   setSearch]   =useState('');
+  const [catFilter,setCatFilter]=useState('All');
+  const [showForm, setShowForm] =useState(false);
+  const [editProd, setEditProd] =useState(null);
+  const [saving,   setSaving]   =useState(false);
+
+  const filtered=useMemo(()=>{
+    let list=catFilter==='All'?catalog:catalog.filter(p=>p.category===catFilter);
+    if(search.trim()){const q=search.toLowerCase();list=list.filter(p=>(`${p.brand} ${p.name}`).toLowerCase().includes(q));}
     return list;
   },[catalog,search,catFilter]);
 
-  const save = async(data) => {
+  const save=async(data)=>{
     setSaving(true);
-    try {
-      if(editProd) {
-        const {error}=await db.from('catalog').update(toDB.catalog(data)).eq('id',editProd.id);
+    try{
+      if(editProd){
+        const{error}=await db.from('catalog').update(toDB.catalog(data)).eq('id',editProd.id);
         if(error) throw error;
         setCatalog(prev=>prev.map(p=>p.id===editProd.id?{...p,...data}:p));
         notify('Product updated ✓');
       } else {
-        const {data:nd,error}=await db.from('catalog').insert(toDB.catalog(data)).select().single();
+        const{data:nd,error}=await db.from('catalog').insert(toDB.catalog(data)).select().single();
         if(error) throw error;
-        setCatalog(prev=>[fromDB.catalog(nd),...prev]);
+        setCatalog(prev=>[...prev,fromDB.catalog(nd)].sort((a,b)=>a.brand.localeCompare(b.brand)));
         notify('Product added ✓');
       }
       setShowForm(false); setEditProd(null);
-    } catch(e){ notify('Save failed: '+e.message,'error'); }
-    finally{ setSaving(false); }
+    }catch(e){notify('Save failed: '+e.message,'error');}
+    finally{setSaving(false);}
   };
 
-  const del = async(id)=>{
-    if(!confirm('Remove this product from catalog?')) return;
-    const {error}=await db.from('catalog').delete().eq('id',id);
+  const del=async(id)=>{
+    if(!confirm('Remove from catalog?')) return;
+    const{error}=await db.from('catalog').delete().eq('id',id);
     if(error) return notify('Delete failed','error');
     setCatalog(prev=>prev.filter(p=>p.id!==id));
     notify('Product removed');
   };
 
-  const cats = ['All',...new Set(catalog.map(p=>p.category).filter(Boolean))];
+  const cats=['All',...new Set(catalog.map(p=>p.category).filter(Boolean))].sort();
 
-  return (
+  return(
     <div className="space-y-4 slide-up">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="font-black text-gray-800 text-xl flex-1">Product Catalog <span className="text-gray-400 font-semibold text-sm">({catalog.length} items)</span></h2>
+        <h2 className="font-black text-gray-800 text-xl flex-1">Product Catalog <span className="text-gray-400 font-semibold text-sm">({catalog.length})</span></h2>
         <Btn size="sm" onClick={()=>{setEditProd(null);setShowForm(true);}}>+ Add Product</Btn>
       </div>
-
       <div className="flex flex-wrap gap-2 items-center">
         <div className="flex gap-1 overflow-x-auto">
           {cats.map(c=>(
             <button key={c} onClick={()=>setCatFilter(c)}
-              className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-bold transition-all ${catFilter===c?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200 hover:border-pink-300'}`}>
+              className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-bold transition-all ${catFilter===c?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200'}`}>
               {c}
             </button>
           ))}
@@ -777,31 +869,31 @@ function CatalogPage({catalog,setCatalog,settings,notify}) {
       </div>
 
       {filtered.length===0
-        ? <Empty icon="🗂️" title="No products found" sub="Add products to your catalog" action={<Btn onClick={()=>setShowForm(true)}>+ Add Product</Btn>}/>
-        : <TblWrap>
-            <thead><tr>
-              <th>Brand</th><th>Name</th><th>Category</th><th>Skin</th><th>Weight</th><th>Cost (KRW)</th><th>Ship (KRW)</th><th>B2C Price</th><th>B2C Profit</th><th>B2B Price</th><th>B2B Profit</th><th></th>
-            </tr></thead>
-            <tbody>
-              {filtered.map(p=>{
-                const shippingKRW = (p.weightGrams/1000)*(+settings.shippingRateKRW||15000);
-                const rate = +settings.uzsPerKrw||8;
-                const totalCostKRW = (+p.estimatedCostKRW||0) + shippingKRW;
-                const b2cProfit = (+p.suggestedB2CPrice||0) - totalCostKRW*rate;
-                const b2bProfit = (+p.suggestedB2BPrice||0) - totalCostKRW*rate;
-                return (
+        ?<Empty icon="🗂️" title="No products found" sub="Add products to your catalog" action={<Btn onClick={()=>setShowForm(true)}>+ Add Product</Btn>}/>
+        :<TblWrap>
+          <thead><tr>
+            <th>Brand</th><th>Name</th><th>Category</th><th>Skin</th><th>Weight</th><th>Cost (KRW)</th><th>Ship (KRW)</th><th>B2C Price</th><th>B2C Profit</th><th>B2B Price</th><th>B2B Profit</th><th></th>
+          </tr></thead>
+          <tbody>
+            {filtered.map(p=>{
+              const ship=(p.weightGrams/1000)*(+settings.shippingRateKRW||15000);
+              const rate=+settings.uzsPerKrw||8;
+              const totalCost=(+p.estimatedCostKRW||0)+ship;
+              const b2cP=(+p.suggestedB2CPrice||0)-totalCost*rate;
+              const b2bP=(+p.suggestedB2BPrice||0)-totalCost*rate;
+              return(
                 <tr key={p.id}>
-                  <td className="font-bold text-pink-600">{p.brand}</td>
+                  <td className="font-bold text-pink-600 whitespace-nowrap">{p.brand}</td>
                   <td className="font-semibold text-gray-800 max-w-[180px]"><span className="truncate block" title={p.name}>{p.name}</span></td>
-                  <td><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold">{p.category||'—'}</span></td>
-                  <td className="text-xs text-gray-500">{p.skinType}</td>
-                  <td className="text-gray-500 text-xs">{p.weightGrams}g</td>
-                  <td className="font-semibold text-gray-700">{fmtKRW(p.estimatedCostKRW)}</td>
-                  <td className="text-blue-500 text-xs italic">{fmtKRW(shippingKRW)} <span className="text-gray-300">auto</span></td>
-                  <td className="font-bold text-emerald-600">{fmtUZS(p.suggestedB2CPrice)}</td>
-                  <td className={`font-bold text-xs ${b2cProfit>=0?'text-emerald-700':'text-red-500'}`}>{fmtUZS(b2cProfit)}</td>
-                  <td className="font-bold text-indigo-600">{fmtUZS(p.suggestedB2BPrice)}</td>
-                  <td className={`font-bold text-xs ${b2bProfit>=0?'text-indigo-700':'text-red-500'}`}>{fmtUZS(b2bProfit)}</td>
+                  <td><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold whitespace-nowrap">{p.category||'—'}</span></td>
+                  <td className="text-xs text-gray-500 whitespace-nowrap">{p.skinType}</td>
+                  <td className="text-xs text-gray-500 whitespace-nowrap">{p.weightGrams}g</td>
+                  <td className="font-semibold text-gray-700 whitespace-nowrap">{fmtKRW(p.estimatedCostKRW)}</td>
+                  <td className="text-blue-500 text-xs whitespace-nowrap">{fmtKRW(ship)}</td>
+                  <td className="font-bold text-emerald-600 whitespace-nowrap">{p.suggestedB2CPrice?fmtUZS(p.suggestedB2CPrice):'—'}</td>
+                  <td className={`font-bold text-xs whitespace-nowrap ${p.suggestedB2CPrice?(b2cP>=0?'text-emerald-700':'text-red-500'):'text-gray-300'}`}>{p.suggestedB2CPrice?fmtUZS(b2cP):'—'}</td>
+                  <td className="font-bold text-indigo-600 whitespace-nowrap">{p.suggestedB2BPrice?fmtUZS(p.suggestedB2BPrice):'—'}</td>
+                  <td className={`font-bold text-xs whitespace-nowrap ${p.suggestedB2BPrice?(b2bP>=0?'text-indigo-700':'text-red-500'):'text-gray-300'}`}>{p.suggestedB2BPrice?fmtUZS(b2bP):'—'}</td>
                   <td>
                     <div className="flex gap-1">
                       <Btn size="xs" variant="ghost" onClick={()=>{setEditProd(p);setShowForm(true);}}>✎</Btn>
@@ -809,19 +901,18 @@ function CatalogPage({catalog,setCatalog,settings,notify}) {
                     </div>
                   </td>
                 </tr>
-                );
-              })}
-            </tbody>
-          </TblWrap>
+              );
+            })}
+          </tbody>
+        </TblWrap>
       }
-
       {showForm&&<ProductForm product={editProd} settings={settings} onSave={save} saving={saving} onClose={()=>{setShowForm(false);setEditProd(null);}}/>}
     </div>
   );
 }
 
 function ProductForm({product,settings,onSave,onClose,saving}) {
-  const [form,setForm] = useState({
+  const [form,setForm]=useState({
     brand:product?.brand||'',name:product?.name||'',category:product?.category||'Serum',
     skinType:product?.skinType||'All',weightGrams:product?.weightGrams||0,
     estimatedCostKRW:product?.estimatedCostKRW||'',
@@ -829,15 +920,12 @@ function ProductForm({product,settings,onSave,onClose,saving}) {
     notes:product?.notes||'',
   });
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
-
-  const shippingKRW = (form.weightGrams/1000)*(+settings?.shippingRateKRW||15000);
-  const rate        = +settings?.uzsPerKrw||8;
-  const totalCostKRW= (+form.estimatedCostKRW||0) + shippingKRW;
-  const b2cProfit   = (+form.suggestedB2CPrice||0) - totalCostKRW*rate;
-  const b2bProfit   = (+form.suggestedB2BPrice||0) - totalCostKRW*rate;
-
-  const submit=()=>{ if(!form.brand.trim()||!form.name.trim()) return alert('Brand and name required.'); onSave(form); };
-  return (
+  const ship=(form.weightGrams/1000)*(+settings?.shippingRateKRW||15000);
+  const rate=+settings?.uzsPerKrw||8;
+  const totalCost=(+form.estimatedCostKRW||0)+ship;
+  const b2cP=(+form.suggestedB2CPrice||0)-totalCost*rate;
+  const b2bP=(+form.suggestedB2BPrice||0)-totalCost*rate;
+  return(
     <Modal title={product?'Edit Product':'Add Product'} onClose={onClose} wide>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
@@ -847,225 +935,343 @@ function ProductForm({product,settings,onSave,onClose,saving}) {
         <div className="grid grid-cols-3 gap-3">
           <Sel label="Category" value={form.category} onChange={e=>f('category',e.target.value)}>{CATEGORIES.map(c=><option key={c}>{c}</option>)}</Sel>
           <Sel label="Skin Type" value={form.skinType} onChange={e=>f('skinType',e.target.value)}>{SKIN_TYPES.map(s=><option key={s}>{s}</option>)}</Sel>
-          <Inp label="Weight (g)" type="number" min="0" value={form.weightGrams} onChange={e=>f('weightGrams',e.target.value)} placeholder="100"/>
+          <Inp label="Weight (g)" type="number" min="0" value={form.weightGrams} onChange={e=>f('weightGrams',e.target.value)}/>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Inp label="Product Cost (KRW)" required type="number" min="0" value={form.estimatedCostKRW} onChange={e=>f('estimatedCostKRW',e.target.value)} placeholder="18000"/>
+          <Inp label="Product Cost (KRW)" required type="number" min="0" value={form.estimatedCostKRW} onChange={e=>f('estimatedCostKRW',e.target.value)} placeholder="12000"/>
           <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 flex flex-col justify-center">
-            <p className="text-xs font-bold text-blue-400 mb-0.5">Shipping Cost (KRW) — auto</p>
-            <p className="text-sm font-black text-blue-700">{fmtKRW(shippingKRW)}</p>
-            <p className="text-xs text-blue-300">{form.weightGrams||0}g × ₩{(+settings?.shippingRateKRW||15000).toLocaleString()}/kg</p>
+            <p className="text-xs font-bold text-blue-400 mb-0.5">Shipping (auto)</p>
+            <p className="text-sm font-black text-blue-700">{fmtKRW(ship)}</p>
+            <p className="text-xs text-blue-300">{form.weightGrams||0}g ÷ 1000 × ₩{(+settings?.shippingRateKRW||15000).toLocaleString()}</p>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Inp label="B2C Selling Price (UZS)" required type="number" min="0" value={form.suggestedB2CPrice} onChange={e=>f('suggestedB2CPrice',e.target.value)} placeholder="280000"/>
-          <Inp label="B2B Selling Price (UZS)" type="number" min="0" value={form.suggestedB2BPrice} onChange={e=>f('suggestedB2BPrice',e.target.value)} placeholder="220000"/>
+          <Inp label="B2C Price (UZS)" type="number" min="0" value={form.suggestedB2CPrice} onChange={e=>f('suggestedB2CPrice',e.target.value)} placeholder="280000"/>
+          <Inp label="B2B Price (UZS)" type="number" min="0" value={form.suggestedB2BPrice} onChange={e=>f('suggestedB2BPrice',e.target.value)} placeholder="220000"/>
         </div>
-        {/* Auto-calculated profit preview */}
         <div className="grid grid-cols-2 gap-3">
-          <div className={`rounded-xl px-3 py-2 ${b2cProfit>=0?'bg-emerald-50 border border-emerald-100':'bg-red-50 border border-red-100'}`}>
-            <p className={`text-xs font-bold mb-0.5 ${b2cProfit>=0?'text-emerald-500':'text-red-400'}`}>B2C Profit — auto</p>
-            <p className={`text-sm font-black ${b2cProfit>=0?'text-emerald-700':'text-red-600'}`}>{fmtUZS(b2cProfit)}</p>
+          <div className={`rounded-xl px-3 py-2 ${b2cP>=0?'bg-emerald-50 border border-emerald-100':'bg-red-50 border border-red-100'}`}>
+            <p className={`text-xs font-bold mb-0.5 ${b2cP>=0?'text-emerald-500':'text-red-400'}`}>B2C Profit (auto)</p>
+            <p className={`text-sm font-black ${b2cP>=0?'text-emerald-700':'text-red-600'}`}>{form.suggestedB2CPrice?fmtUZS(b2cP):'—'}</p>
           </div>
-          <div className={`rounded-xl px-3 py-2 ${b2bProfit>=0?'bg-indigo-50 border border-indigo-100':'bg-red-50 border border-red-100'}`}>
-            <p className={`text-xs font-bold mb-0.5 ${b2bProfit>=0?'text-indigo-500':'text-red-400'}`}>B2B Profit — auto</p>
-            <p className={`text-sm font-black ${b2bProfit>=0?'text-indigo-700':'text-red-600'}`}>{fmtUZS(b2bProfit)}</p>
+          <div className={`rounded-xl px-3 py-2 ${b2bP>=0?'bg-indigo-50 border border-indigo-100':'bg-red-50 border border-red-100'}`}>
+            <p className={`text-xs font-bold mb-0.5 ${b2bP>=0?'text-indigo-500':'text-red-400'}`}>B2B Profit (auto)</p>
+            <p className={`text-sm font-black ${b2bP>=0?'text-indigo-700':'text-red-600'}`}>{form.suggestedB2BPrice?fmtUZS(b2bP):'—'}</p>
           </div>
         </div>
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1">Notes</label>
-          <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 resize-none" placeholder="Best seller, seasonal, etc."/>
+          <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 resize-none" placeholder="Best seller, seasonal…"/>
         </div>
-        <Btn size="lg" onClick={submit} loading={saving}>✓ Save Product</Btn>
+        <Btn size="lg" onClick={()=>{if(!form.brand.trim()||!form.name.trim())return alert('Brand and name required.');onSave(form);}} loading={saving}>✓ Save Product</Btn>
       </div>
     </Modal>
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// INVENTORY PAGE
-// ══════════════════════════════════════════════════════════════
-function InventoryPage({inventory,setInventory,catalog,orders,notify,upsertInventory}) {
-  const [editQty, setEditQty] = useState({});
-  const [saving,  setSaving]  = useState(null);
+// ── PROCUREMENT PAGE ──────────────────────────────────────────
+function ProcurementPage({orders,orderItems,catalog,settings}) {
+  const rate=+settings.shippingRateKRW||15000;
 
-  // Merge inventory with catalog
-  const items = useMemo(()=>{
-    return catalog.map(p=>{
-      const inv    = inventory.find(i=>i.productId===p.id);
-      const pending= orders.filter(o=>o.productId===p.id&&o.status==='Pending').reduce((s,o)=>s+(+o.quantity||0),0);
-      const inTransit=orders.filter(o=>o.productId===p.id&&['Purchased','Shipped'].includes(o.status)).reduce((s,o)=>s+(+o.quantity||0),0);
-      return {product:p, inStock:inv?.quantity||0, pending, inTransit};
-    }).filter(x=>x.inStock>0||x.pending>0||x.inTransit>0);
-  },[catalog,inventory,orders]);
+  const list=useMemo(()=>{
+    const pendingOrderIds=new Set(orders.filter(o=>o.status==='Pending').map(o=>o.id));
+    const pendingItems=orderItems.filter(i=>pendingOrderIds.has(i.orderId));
+    const groups={};
+    pendingItems.forEach(i=>{
+      const key=i.productId||'unknown';
+      if(!groups[key]){const p=catalog.find(c=>c.id===i.productId);groups[key]={product:p,totalQty:0,orderCount:0};}
+      groups[key].totalQty+=+i.quantity||1;
+      groups[key].orderCount+=1;
+    });
+    return Object.values(groups).sort((a,b)=>(a.product?.brand||'').localeCompare(b.product?.brand||''));
+  },[orders,orderItems,catalog]);
 
-  const adjust = async(productId, delta) => {
-    setSaving(productId);
-    await upsertInventory(productId, delta);
-    setSaving(null);
-    notify('Stock updated ✓');
-  };
+  const grandTotalKRW=list.reduce((s,g)=>{
+    if(!g.product) return s;
+    const ship=(g.product.weightGrams/1000)*rate;
+    return s+((+g.product.estimatedCostKRW||0)+ship)*g.totalQty;
+  },0);
 
-  const setManual = async(productId) => {
-    const qty = editQty[productId];
-    if(qty===undefined||qty==='') return;
-    setSaving(productId);
-    const {data,error} = await db.from('inventory').upsert({product_id:productId,quantity:Math.max(0,+qty||0),updated_at:new Date().toISOString()},{onConflict:'product_id'}).select().single();
-    if(!error&&data) {
-      setInventory(prev=>{
-        const updated=fromDB.inv(data);
-        const exists=prev.find(i=>i.productId===productId);
-        return exists?prev.map(i=>i.productId===productId?updated:i):[...prev,updated];
-      });
-      notify('Stock set ✓');
-    }
-    setSaving(null);
-    setEditQty(prev=>({...prev,[productId]:''}));
-  };
+  const pendingCount=orders.filter(o=>o.status==='Pending').length;
 
-  return (
+  return(
     <div className="space-y-4 slide-up">
-      <h2 className="font-black text-gray-800 text-xl">Stock / Inventory</h2>
-      <p className="text-sm text-gray-400">Stock increases automatically when orders move to <strong>Purchased</strong>. Adjust manually if needed.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-black text-gray-800 text-xl">Buy List</h2>
+          <p className="text-sm text-gray-400">{pendingCount} pending order{pendingCount!==1?'s':''} · what to buy in Korea</p>
+        </div>
+        {grandTotalKRW>0&&(
+          <div className="bg-gradient-to-br from-pink-500 to-rose-600 text-white rounded-2xl px-5 py-3 text-right shadow-sm">
+            <p className="text-xs font-semibold opacity-70">Total to Send Korea</p>
+            <p className="text-xl font-black">{fmtKRW(grandTotalKRW)}</p>
+          </div>
+        )}
+      </div>
 
-      {items.length===0
-        ? <Empty icon="📦" title="No stock yet" sub="Stock is added automatically when orders are marked Purchased"/>
-        : <TblWrap>
-            <thead><tr>
-              <th>Brand</th><th>Product</th><th>In Stock</th><th>Pending Orders</th><th>In Transit</th><th>Adjust</th>
-            </tr></thead>
-            <tbody>
-              {items.map(({product:p,inStock,pending,inTransit})=>(
-                <tr key={p.id}>
-                  <td className="font-bold text-pink-600">{p.brand}</td>
-                  <td className="font-semibold text-gray-800">{p.name}</td>
-                  <td>
-                    <span className={`font-black text-lg ${inStock>0?'text-green-600':'text-gray-400'}`}>{inStock}</span>
-                  </td>
-                  <td className="text-amber-600 font-bold">{pending||'—'}</td>
-                  <td className="text-violet-600 font-bold">{inTransit||'—'}</td>
-                  <td>
-                    <div className="flex items-center gap-1">
-                      <Btn size="xs" variant="ghost" onClick={()=>adjust(p.id,-1)} disabled={saving===p.id||inStock<=0}>−</Btn>
-                      <Btn size="xs" variant="ghost" onClick={()=>adjust(p.id,+1)} disabled={saving===p.id}>+</Btn>
-                      <input type="number" value={editQty[p.id]??''} onChange={e=>setEditQty(prev=>({...prev,[p.id]:e.target.value}))}
-                        placeholder="Set" className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs text-center"/>
-                      <Btn size="xs" variant="secondary" onClick={()=>setManual(p.id)} disabled={saving===p.id}>Set</Btn>
-                    </div>
-                  </td>
+      {list.length===0
+        ?<Empty icon="🛒" title="Buy list is empty" sub="Add orders with Pending status to see what needs to be bought"/>
+        :<TblWrap>
+          <thead><tr>
+            <th>Brand</th><th>Product</th><th>Category</th><th>Total Qty</th><th>Unit Cost (KRW)</th><th>Shipping (KRW)</th><th>Total Cost (KRW)</th><th>Orders</th>
+          </tr></thead>
+          <tbody>
+            {list.map((g,i)=>{
+              const ship=g.product?(g.product.weightGrams/1000)*rate:0;
+              const unitCost=(+g.product?.estimatedCostKRW||0)+ship;
+              const totalCost=unitCost*g.totalQty;
+              return(
+                <tr key={i}>
+                  <td className="font-bold text-pink-600">{g.product?.brand||'—'}</td>
+                  <td className="font-semibold text-gray-800 max-w-[200px]"><span className="truncate block">{g.product?.name||'Unknown product'}</span></td>
+                  <td><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{g.product?.category||'—'}</span></td>
+                  <td className="font-black text-pink-600 text-lg">{g.totalQty}</td>
+                  <td className="text-gray-600">{g.product?fmtKRW(unitCost):'—'}</td>
+                  <td className="text-blue-500 text-xs">{g.product?fmtKRW(ship):'—'}</td>
+                  <td className="font-bold text-gray-800">{g.product?fmtKRW(totalCost):'—'}</td>
+                  <td className="text-gray-400 text-sm">{g.orderCount}</td>
                 </tr>
-              ))}
-            </tbody>
-          </TblWrap>
+              );
+            })}
+          </tbody>
+          {grandTotalKRW>0&&(
+            <tfoot>
+              <tr>
+                <td colSpan={6} className="px-3 py-3 text-right font-black text-gray-700 text-sm">Grand Total</td>
+                <td className="px-3 py-3 font-black text-pink-600 text-base">{fmtKRW(grandTotalKRW)}</td>
+                <td/>
+              </tr>
+            </tfoot>
+          )}
+        </TblWrap>
       }
     </div>
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// EXPENSES PAGE
-// ══════════════════════════════════════════════════════════════
-function ExpensesPage({expenses,setExpenses,settings,notify}) {
-  const [showForm,  setShowForm]  = useState(false);
-  const [editExp,   setEditExp]   = useState(null);
-  const [typeFilter,setTypeFilter]= useState('All');
-  const [saving,    setSaving]    = useState(false);
-  const sp = settings.salespersons||[];
+// ── FINANCE PAGE ──────────────────────────────────────────────
+function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCapital,settings,notify}) {
+  const [tab,setTab]=useState('overview');
+  const rate=+settings.uzsPerKrw||8;
 
-  const filtered = useMemo(()=>{
-    const list = typeFilter==='All'?expenses:expenses.filter(e=>e.type===typeFilter);
-    return [...list].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  },[expenses,typeFilter]);
+  const totalRevUZS=0; // pulled from orders in real usage
+  const totalExpKRW=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
+  const totalTransKRW=transfers.reduce((s,t)=>s+(+t.amountKRW||0),0);
+  const totalTransUZS=transfers.reduce((s,t)=>s+(+t.amountUZS||0),0);
+  const totalCapUZS=capital.reduce((s,c)=>s+(+c.amountUZS||0),0);
+  const totalCostUZS=(totalExpKRW+totalTransKRW)*rate;
 
-  const total = filtered.reduce((s,e)=>s+(+e.amountKRW||0),0);
-
-  const save = async(data)=>{
-    setSaving(true);
-    try {
-      if(editExp){
-        const {error}=await db.from('expenses').update(toDB.expense(data)).eq('id',editExp.id);
-        if(error) throw error;
-        setExpenses(prev=>prev.map(e=>e.id===editExp.id?{...e,...data}:e));
-        notify('Expense updated ✓');
-      } else {
-        const {data:nd,error}=await db.from('expenses').insert(toDB.expense(data)).select().single();
-        if(error) throw error;
-        setExpenses(prev=>[fromDB.expense(nd),...prev]);
-        notify('Expense added ✓');
-      }
-      setShowForm(false); setEditExp(null);
-    } catch(e){ notify('Save failed: '+e.message,'error'); }
-    finally{ setSaving(false); }
-  };
-
-  const del = async(id)=>{
-    if(!confirm('Delete this expense?')) return;
-    const {error}=await db.from('expenses').delete().eq('id',id);
-    if(error) return notify('Delete failed','error');
-    setExpenses(prev=>prev.filter(e=>e.id!==id));
-    notify('Expense deleted');
-  };
-
-  return (
+  return(
     <div className="space-y-4 slide-up">
-      <div className="flex items-center gap-2">
-        <div className="flex-1">
-          <h2 className="font-black text-gray-800 text-xl">Expenses</h2>
-          <p className="text-xs text-gray-400">Total shown: <span className="font-black text-red-500">{fmtKRW(total)}</span></p>
-        </div>
-        <Btn size="sm" onClick={()=>{setEditExp(null);setShowForm(true);}}>+ Add</Btn>
+      <h2 className="font-black text-gray-800 text-xl">Finance</h2>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatBox label="Sent to Korea"    value={fmtKRW(totalTransKRW)}  sub={`${fmtUZS(totalTransUZS)} spent`} color="blue"/>
+        <StatBox label="Local Expenses"   value={fmtKRW(totalExpKRW)}    sub="Salary, cargo etc"               color="amber"/>
+        <StatBox label="Total Costs"      value={fmtUZS(totalCostUZS)}   sub="KRW converted"                   color="gray"/>
+        <StatBox label="Capital Added"    value={fmtUZS(totalCapUZS)}    sub="Investments in"                  color="violet"/>
       </div>
-      <div className="flex gap-1 overflow-x-auto">
-        {['All',...EXP_TYPES].map(t=>(
-          <button key={t} onClick={()=>setTypeFilter(t)}
-            className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-bold transition-all ${typeFilter===t?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200 hover:border-pink-300'}`}>{t}</button>
+
+      {/* Tabs */}
+      <div className="flex gap-2">
+        {[['overview','Overview'],['transfers','Korea Transfers'],['expenses','Local Expenses'],['capital','Capital']].map(([k,l])=>(
+          <button key={k} onClick={()=>setTab(k)}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${tab===k?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200 hover:border-pink-300'}`}>
+            {l}
+          </button>
         ))}
       </div>
-      {filtered.length===0
-        ? <Empty icon="💰" title="No expenses" sub="Track salaries, cargo, and operational costs"/>
-        : <TblWrap>
-            <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount (KRW)</th><th>Paid By</th><th></th></tr></thead>
-            <tbody>
-              {filtered.map(e=>(
-                <tr key={e.id}>
-                  <td className="text-gray-400 text-xs">{fmtDate(e.date)}</td>
-                  <td><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold">{e.type}</span></td>
-                  <td className="font-semibold text-gray-800">{e.description}</td>
-                  <td className="font-black text-red-500">{fmtKRW(e.amountKRW)}</td>
-                  <td className="text-gray-500 text-xs">{e.paidBy||'—'}</td>
-                  <td><div className="flex gap-1">
-                    <Btn size="xs" variant="ghost" onClick={()=>{setEditExp(e);setShowForm(true);}}>✎</Btn>
-                    <Btn size="xs" variant="danger" onClick={()=>del(e.id)}>✕</Btn>
-                  </div></td>
-                </tr>
-              ))}
-            </tbody>
-          </TblWrap>
+
+      {tab==='overview'&&<FinanceOverview expenses={expenses} transfers={transfers} capital={capital} settings={settings}/>}
+      {tab==='transfers'&&<TransfersTab transfers={transfers} setTransfers={setTransfers} notify={notify}/>}
+      {tab==='expenses'&&<ExpensesTab expenses={expenses} setExpenses={setExpenses} settings={settings} notify={notify}/>}
+      {tab==='capital'&&<CapitalTab capital={capital} setCapital={setCapital} notify={notify}/>}
+    </div>
+  );
+}
+
+function FinanceOverview({expenses,transfers,capital,settings}) {
+  const rate=+settings.uzsPerKrw||8;
+  // Group by month
+  const months={};
+  const addMonth=(date,krw,uzs)=>{
+    const m=date?.slice(0,7)||'Unknown';
+    if(!months[m]) months[m]={krw:0,uzs:0};
+    months[m].krw+=krw||0;
+    months[m].uzs+=uzs||0;
+  };
+  expenses.forEach(e=>addMonth(e.date,+e.amountKRW,+e.amountKRW*rate));
+  transfers.forEach(t=>addMonth(t.date,+t.amountKRW,+t.amountUZS));
+
+  const sortedMonths=Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,6);
+
+  return(
+    <div className="space-y-3">
+      {sortedMonths.length===0
+        ?<Card className="p-6 text-center text-gray-400">No financial data yet. Add transfers and expenses.</Card>
+        :<TblWrap>
+          <thead><tr><th>Month</th><th>Total Spent (KRW)</th><th>≈ UZS</th></tr></thead>
+          <tbody>
+            {sortedMonths.map(([m,v])=>(
+              <tr key={m}>
+                <td className="font-bold text-gray-700">{m}</td>
+                <td className="font-black text-gray-800">{fmtKRW(v.krw)}</td>
+                <td className="text-gray-500">{fmtUZS(v.uzs)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </TblWrap>
+      }
+    </div>
+  );
+}
+
+function TransfersTab({transfers,setTransfers,notify}) {
+  const [showForm,setShowForm]=useState(false);
+  const [saving,  setSaving]  =useState(false);
+
+  const save=async(data)=>{
+    setSaving(true);
+    try{
+      const{data:nd,error}=await db.from('transfers').insert(toDB.transfer(data)).select().single();
+      if(error) throw error;
+      setTransfers(prev=>[fromDB.transfer(nd),...prev]);
+      notify('Transfer recorded ✓');
+      setShowForm(false);
+    }catch(e){notify('Save failed: '+e.message,'error');}
+    finally{setSaving(false);}
+  };
+
+  const del=async(id)=>{
+    if(!confirm('Delete this transfer?')) return;
+    await db.from('transfers').delete().eq('id',id);
+    setTransfers(prev=>prev.filter(t=>t.id!==id));
+    notify('Deleted');
+  };
+
+  return(
+    <div className="space-y-3">
+      <div className="flex justify-end"><Btn size="sm" onClick={()=>setShowForm(true)}>+ Add Transfer</Btn></div>
+      {transfers.length===0
+        ?<Empty icon="💸" title="No transfers yet" sub="Record money sent to Korea"/>
+        :<TblWrap>
+          <thead><tr><th>Date</th><th>Amount (KRW)</th><th>Amount Spent (UZS)</th><th>Notes</th><th></th></tr></thead>
+          <tbody>
+            {transfers.map(t=>(
+              <tr key={t.id}>
+                <td className="text-gray-400 text-xs">{fmtDate(t.date)}</td>
+                <td className="font-black text-blue-600">{fmtKRW(t.amountKRW)}</td>
+                <td className="font-bold text-gray-700">{t.amountUZS?fmtUZS(t.amountUZS):'—'}</td>
+                <td className="text-gray-500 text-sm">{t.notes||'—'}</td>
+                <td><Btn size="xs" variant="danger" onClick={()=>del(t.id)}>✕</Btn></td>
+              </tr>
+            ))}
+          </tbody>
+        </TblWrap>
       }
       {showForm&&(
-        <Modal title={editExp?'Edit Expense':'New Expense'} onClose={()=>{setShowForm(false);setEditExp(null);}}>
-          <ExpenseForm expense={editExp} onSave={save} saving={saving} salespersons={sp}/>
+        <Modal title="Transfer to Korea" onClose={()=>setShowForm(false)}>
+          <TransferForm onSave={save} saving={saving}/>
         </Modal>
       )}
     </div>
   );
 }
 
-function ExpenseForm({expense,onSave,saving,salespersons}) {
-  const sp=salespersons?.length?salespersons:[];
-  const [form,setForm]=useState({date:expense?.date||today(),type:expense?.type||'Salary',description:expense?.description||'',amountKRW:expense?.amountKRW||'',paidBy:expense?.paidBy||sp[0]||''});
+function TransferForm({onSave,saving}) {
+  const [form,setForm]=useState({date:today(),amountKRW:'',amountUZS:'',notes:''});
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
-  return (
+  return(
+    <div className="space-y-3">
+      <Inp label="Date" required type="date" value={form.date} onChange={e=>f('date',e.target.value)}/>
+      <div className="grid grid-cols-2 gap-3">
+        <Inp label="Amount Sent (KRW)" required type="number" min="0" value={form.amountKRW} onChange={e=>f('amountKRW',e.target.value)} placeholder="500000"/>
+        <Inp label="UZS Spent" type="number" min="0" value={form.amountUZS} onChange={e=>f('amountUZS',e.target.value)} placeholder="4000000"/>
+      </div>
+      <Inp label="Notes" value={form.notes} onChange={e=>f('notes',e.target.value)} placeholder="e.g. 2nd batch April"/>
+      <Btn size="lg" onClick={()=>{if(!form.amountKRW)return alert('Enter KRW amount.');onSave(form);}} loading={saving}>✓ Save Transfer</Btn>
+    </div>
+  );
+}
+
+function ExpensesTab({expenses,setExpenses,settings,notify}) {
+  const [showForm, setShowForm] =useState(false);
+  const [saving,   setSaving]   =useState(false);
+  const sp=settings.salespersons||[];
+
+  const save=async(data)=>{
+    setSaving(true);
+    try{
+      const{data:nd,error}=await db.from('expenses').insert(toDB.expense(data)).select().single();
+      if(error) throw error;
+      setExpenses(prev=>[fromDB.expense(nd),...prev]);
+      notify('Expense added ✓');
+      setShowForm(false);
+    }catch(e){notify('Save failed: '+e.message,'error');}
+    finally{setSaving(false);}
+  };
+
+  const del=async(id)=>{
+    if(!confirm('Delete this expense?')) return;
+    await db.from('expenses').delete().eq('id',id);
+    setExpenses(prev=>prev.filter(e=>e.id!==id));
+    notify('Deleted');
+  };
+
+  const total=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
+
+  return(
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-500">Total: <span className="font-black text-red-500">{fmtKRW(total)}</span></p>
+        <Btn size="sm" onClick={()=>setShowForm(true)}>+ Add Expense</Btn>
+      </div>
+      {expenses.length===0
+        ?<Empty icon="💰" title="No expenses" sub="Record salary, cargo, packaging costs"/>
+        :<TblWrap>
+          <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount (KRW)</th><th>Paid By</th><th></th></tr></thead>
+          <tbody>
+            {expenses.map(e=>(
+              <tr key={e.id}>
+                <td className="text-gray-400 text-xs">{fmtDate(e.date)}</td>
+                <td><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold">{e.type}</span></td>
+                <td className="font-semibold text-gray-800">{e.description}</td>
+                <td className="font-black text-red-500">{fmtKRW(e.amountKRW)}</td>
+                <td className="text-gray-500 text-xs">{e.paidBy||'—'}</td>
+                <td><Btn size="xs" variant="danger" onClick={()=>del(e.id)}>✕</Btn></td>
+              </tr>
+            ))}
+          </tbody>
+        </TblWrap>
+      }
+      {showForm&&(
+        <Modal title="New Expense" onClose={()=>setShowForm(false)}>
+          <div className="space-y-3">
+            <ExpenseFormInner onSave={save} saving={saving} salespersons={sp}/>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ExpenseFormInner({onSave,saving,salespersons}) {
+  const sp=salespersons||[];
+  const [form,setForm]=useState({date:today(),type:'Salary',description:'',amountKRW:'',paidBy:sp[0]||''});
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+  return(
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <Inp label="Date" required type="date" value={form.date} onChange={e=>f('date',e.target.value)}/>
         <Sel label="Type" required value={form.type} onChange={e=>f('type',e.target.value)}>{EXP_TYPES.map(t=><option key={t}>{t}</option>)}</Sel>
       </div>
-      <Inp label="Description" required value={form.description} onChange={e=>f('description',e.target.value)} placeholder="e.g. Monthly cargo fee"/>
+      <Inp label="Description" required value={form.description} onChange={e=>f('description',e.target.value)} placeholder="e.g. Monthly salary Nazokat"/>
       <Inp label="Amount (KRW)" required type="number" min="0" value={form.amountKRW} onChange={e=>f('amountKRW',e.target.value)} placeholder="50000"/>
       <div>
         <label className="block text-xs font-bold text-gray-500 mb-1">Paid By</label>
-        <input list="sp-list" value={form.paidBy} onChange={e=>f('paidBy',e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50" placeholder="Name"/>
+        <input list="sp-list" value={form.paidBy} onChange={e=>f('paidBy',e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50"/>
         <datalist id="sp-list">{sp.map(s=><option key={s} value={s}/>)}</datalist>
       </div>
       <Btn size="lg" onClick={()=>{if(!form.description.trim()||!form.amountKRW)return alert('Fill required fields.');onSave(form);}} loading={saving}>✓ Save Expense</Btn>
@@ -1073,46 +1279,109 @@ function ExpenseForm({expense,onSave,saving,salespersons}) {
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// SETTINGS PAGE
-// ══════════════════════════════════════════════════════════════
+function CapitalTab({capital,setCapital,notify}) {
+  const [showForm,setShowForm]=useState(false);
+  const [saving,  setSaving]  =useState(false);
+
+  const save=async(data)=>{
+    setSaving(true);
+    try{
+      const{data:nd,error}=await db.from('capital').insert(toDB.capital(data)).select().single();
+      if(error) throw error;
+      setCapital(prev=>[fromDB.capital(nd),...prev]);
+      notify('Capital recorded ✓');
+      setShowForm(false);
+    }catch(e){notify('Save failed: '+e.message,'error');}
+    finally{setSaving(false);}
+  };
+
+  const del=async(id)=>{
+    if(!confirm('Delete?')) return;
+    await db.from('capital').delete().eq('id',id);
+    setCapital(prev=>prev.filter(c=>c.id!==id));
+  };
+
+  const total=capital.reduce((s,c)=>s+(+c.amountUZS||0),0);
+
+  return(
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-500">Total invested: <span className="font-black text-violet-600">{fmtUZS(total)}</span></p>
+        <Btn size="sm" onClick={()=>setShowForm(true)}>+ Add Capital</Btn>
+      </div>
+      {capital.length===0
+        ?<Empty icon="💼" title="No capital entries" sub="Record money added to the business"/>
+        :<TblWrap>
+          <thead><tr><th>Date</th><th>Amount (UZS)</th><th>Person</th><th>Notes</th><th></th></tr></thead>
+          <tbody>
+            {capital.map(c=>(
+              <tr key={c.id}>
+                <td className="text-gray-400 text-xs">{fmtDate(c.date)}</td>
+                <td className="font-black text-violet-600">{fmtUZS(c.amountUZS)}</td>
+                <td className="font-semibold text-gray-700">{c.person||'—'}</td>
+                <td className="text-gray-500 text-sm">{c.notes||'—'}</td>
+                <td><Btn size="xs" variant="danger" onClick={()=>del(c.id)}>✕</Btn></td>
+              </tr>
+            ))}
+          </tbody>
+        </TblWrap>
+      }
+      {showForm&&(
+        <Modal title="Add Capital" onClose={()=>setShowForm(false)}>
+          <div className="space-y-3">
+            <CapitalForm onSave={save} saving={saving}/>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function CapitalForm({onSave,saving}) {
+  const [form,setForm]=useState({date:today(),amountUZS:'',person:'',notes:''});
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+  return(
+    <div className="space-y-3">
+      <Inp label="Date" required type="date" value={form.date} onChange={e=>f('date',e.target.value)}/>
+      <Inp label="Amount (UZS)" required type="number" min="0" value={form.amountUZS} onChange={e=>f('amountUZS',e.target.value)} placeholder="5000000"/>
+      <Inp label="Person" value={form.person} onChange={e=>f('person',e.target.value)} placeholder="Who added the money"/>
+      <Inp label="Notes" value={form.notes} onChange={e=>f('notes',e.target.value)} placeholder="e.g. Initial investment"/>
+      <Btn size="lg" onClick={()=>{if(!form.amountUZS)return alert('Enter amount.');onSave(form);}} loading={saving}>✓ Save</Btn>
+    </div>
+  );
+}
+
+// ── SETTINGS PAGE ─────────────────────────────────────────────
 function SettingsPage({settings,setSettings,notify}) {
-  const [shipRate, setShipRate] = useState(settings.shippingRateKRW||15000);
-  const [uzsPerKrw,setUzsPerKrw]= useState(settings.uzsPerKrw||8);
-  const [spTxt,    setSpTxt]    = useState((settings.salespersons||[]).join(', '));
+  const [shipRate, setShipRate]  =useState(settings.shippingRateKRW||15000);
+  const [uzsPerKrw,setUzsPerKrw]=useState(settings.uzsPerKrw||8);
+  const [spTxt,    setSpTxt]     =useState((settings.salespersons||[]).join(', '));
 
   const save=()=>{
-    setSettings({...settings, shippingRateKRW:+shipRate, uzsPerKrw:+uzsPerKrw, salespersons:spTxt.split(',').map(s=>s.trim()).filter(Boolean)});
+    setSettings({...settings,shippingRateKRW:+shipRate,uzsPerKrw:+uzsPerKrw,salespersons:spTxt.split(',').map(s=>s.trim()).filter(Boolean)});
     notify('Settings saved ✓');
   };
 
-  return (
+  return(
     <div className="max-w-lg space-y-4 slide-up">
       <h2 className="font-black text-gray-800 text-xl">Settings</h2>
       <Card className="p-4 space-y-4">
-        <p className="font-extrabold text-gray-700">Rates & Currency</p>
-
+        <p className="font-extrabold text-gray-700">Rates</p>
         <div>
-          <Inp label="Shipping Rate (KRW per kg)" type="number" min="0" value={shipRate} onChange={e=>setShipRate(e.target.value)} placeholder="15000"/>
-          <p className="text-xs text-gray-400 mt-1">
-            Example: 100g product → ₩{Math.round((100/1000)*(+shipRate||15000)).toLocaleString()} shipping &nbsp;·&nbsp;
-            500g → ₩{Math.round((500/1000)*(+shipRate||15000)).toLocaleString()}
-          </p>
+          <Inp label="Shipping Rate (KRW per kg)" type="number" min="0" value={shipRate} onChange={e=>setShipRate(e.target.value)}/>
+          <p className="text-xs text-gray-400 mt-1">100g → {fmtKRW((100/1000)*(+shipRate||15000))} · 500g → {fmtKRW((500/1000)*(+shipRate||15000))}</p>
         </div>
-
         <div>
-          <Inp label="Exchange Rate (UZS per 1 KRW)" type="number" min="0" step="0.1" value={uzsPerKrw} onChange={e=>setUzsPerKrw(e.target.value)} placeholder="8"/>
-          <p className="text-xs text-gray-400 mt-1">
-            ₩1,000 = {Math.round(1000*(+uzsPerKrw||8)).toLocaleString()} UZS &nbsp;·&nbsp;
-            ₩10,000 = {Math.round(10000*(+uzsPerKrw||8)).toLocaleString()} UZS
-          </p>
+          <Inp label="Exchange Rate (UZS per 1 KRW)" type="number" min="0" step="0.1" value={uzsPerKrw} onChange={e=>setUzsPerKrw(e.target.value)}/>
+          <p className="text-xs text-gray-400 mt-1">₩1,000 = {(1000*(+uzsPerKrw||8)).toLocaleString()} UZS · ₩10,000 = {(10000*(+uzsPerKrw||8)).toLocaleString()} UZS</p>
         </div>
       </Card>
       <Card className="p-4 space-y-3">
-        <p className="font-extrabold text-gray-700">Team (Salespersons)</p>
+        <p className="font-extrabold text-gray-700">Team</p>
         <div>
-          <label className="block text-xs font-bold text-gray-500 mb-1">Names (comma-separated)</label>
-          <textarea value={spTxt} onChange={e=>setSpTxt(e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 resize-none" placeholder="Amir, Zara, Dina…"/>
+          <label className="block text-xs font-bold text-gray-500 mb-1">Salespersons (comma-separated)</label>
+          <textarea value={spTxt} onChange={e=>setSpTxt(e.target.value)} rows={2}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 resize-none" placeholder="Nazokat, Namuna, OJ…"/>
         </div>
       </Card>
       <Btn size="lg" onClick={save}>✓ Save Settings</Btn>
@@ -1121,7 +1390,7 @@ function SettingsPage({settings,setSettings,notify}) {
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white font-black">M</div>
           <div>
             <p className="font-black text-gray-800">Muna Manager</p>
-            <p className="text-xs text-gray-400">v3.0 · K-Beauty Business System · Supabase</p>
+            <p className="text-xs text-gray-400">v4.0 · K-Beauty Business System · Supabase</p>
           </div>
         </div>
       </Card>
@@ -1129,9 +1398,7 @@ function SettingsPage({settings,setSettings,notify}) {
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// MOUNT
-// ══════════════════════════════════════════════════════════════
+// ── MOUNT ─────────────────────────────────────────────────────
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>
 </body>
