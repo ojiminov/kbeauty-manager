@@ -419,6 +419,14 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,catalog
   const saveOrder=async(orderData,items)=>{
     setSaving(true);
     try{
+      // Auto-create new customer if only a name was typed
+      if(!orderData.customerId&&orderData.newCustomerName){
+        const{data:nc,error:ce}=await db.from('customers').insert({name:orderData.newCustomerName}).select().single();
+        if(ce) throw ce;
+        setCustomers(prev=>[...prev,fromDB.customer(nc)].sort((a,b)=>a.name.localeCompare(b.name)));
+        orderData={...orderData,customerId:nc.id};
+        notify(`New customer "${nc.name}" created`);
+      }
       if(editOrder){
         const{error}=await db.from('orders').update(toDB.order(orderData)).eq('id',editOrder.id);
         if(error) throw error;
@@ -560,6 +568,8 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
   const [items,setItems]=useState(orderItems?.length?orderItems:[{productId:'',quantity:1,priceUZS:'',type:'B2C'}]);
   const [prodSearch,setProdSearch]=useState('');
   const [activeItemIdx,setActiveItemIdx]=useState(null);
+  const [custSearch,setCustSearch]=useState('');
+  const [custOpen,setCustOpen]=useState(false);
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
 
   const addItem=()=>setItems(p=>[...p,{productId:'',quantity:1,priceUZS:'',type:'B2C'}]);
@@ -569,7 +579,7 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
     const updated={...it,[k]:v};
     if(k==='productId'||k==='type'){
       const prod=catalog.find(c=>c.id===(k==='productId'?v:it.productId));
-      if(prod&&!order) updated.priceUZS=(k==='type'?v:updated.type)==='B2B'?prod.suggestedB2BPrice:prod.suggestedB2CPrice;
+      if(prod) updated.priceUZS=(k==='type'?v:updated.type)==='B2B'?prod.suggestedB2BPrice:prod.suggestedB2CPrice;
     }
     return updated;
   }));
@@ -580,13 +590,22 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
     return catalog.filter(p=>(`${p.brand} ${p.name}`).toLowerCase().includes(q)).slice(0,15);
   },[catalog,prodSearch]);
 
+  const filteredCustomers=useMemo(()=>{
+    if(!custSearch.trim()) return customers.slice(0,8);
+    const q=custSearch.toLowerCase();
+    return customers.filter(c=>(c.name||'').toLowerCase().includes(q)||(c.phone||'').includes(q)||(c.telegram||'').toLowerCase().includes(q)).slice(0,8);
+  },[customers,custSearch]);
+
   const orderTotal=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
 
   const submit=()=>{
-    if(!form.customerId) return alert('Please select a customer.');
+    const hasCustomer=form.customerId||custSearch.trim();
+    if(!hasCustomer) return alert('Please enter a customer name.');
     if(items.every(i=>!i.productId&&!i.priceUZS)) return alert('Add at least one item.');
     const validItems=items.filter(i=>i.productId||i.priceUZS);
-    onSave(form,validItems);
+    const orderData={...form};
+    if(!form.customerId&&custSearch.trim()) orderData.newCustomerName=custSearch.trim();
+    onSave(orderData,validItems);
   };
 
   const selectedCustomer=customers.find(c=>c.id===form.customerId);
@@ -601,14 +620,39 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
             ?<div className="flex items-center gap-2 border border-pink-200 rounded-xl px-3 py-2 bg-pink-50">
                <div className="flex-1">
                  <p className="text-sm font-bold text-gray-800">{selectedCustomer.name}</p>
-                 <p className="text-xs text-gray-400">{selectedCustomer.phone||selectedCustomer.telegram} · {selectedCustomer.address}</p>
+                 <p className="text-xs text-gray-400">{selectedCustomer.phone||selectedCustomer.telegram||''}{selectedCustomer.address?' · '+selectedCustomer.address:''}</p>
                </div>
-               <button onClick={()=>f('customerId','')} className="text-gray-400 hover:text-red-500 font-black text-lg">×</button>
+               <button onClick={()=>{f('customerId','');setCustSearch('');}} className="text-gray-400 hover:text-red-500 font-black text-lg">×</button>
              </div>
-            :<select value={form.customerId} onChange={e=>f('customerId',e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50">
-               <option value="">— Select customer —</option>
-               {customers.map(c=><option key={c.id} value={c.id}>{c.name} {c.phone?'· '+c.phone:''}</option>)}
-             </select>
+            :<div className="relative">
+               <input
+                 value={custSearch}
+                 onChange={e=>{setCustSearch(e.target.value);setCustOpen(true);f('customerId','');}}
+                 onFocus={()=>setCustOpen(true)}
+                 onBlur={()=>setTimeout(()=>setCustOpen(false),180)}
+                 placeholder="Type customer name…"
+                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:border-pink-400 focus:outline-none"
+               />
+               {custOpen&&(
+                 <div className="absolute top-full left-0 right-0 border border-gray-200 rounded-xl bg-white shadow-lg max-h-52 overflow-y-auto mt-1 z-20">
+                   {filteredCustomers.map(c=>(
+                     <button key={c.id} onMouseDown={()=>{f('customerId',c.id);setCustSearch('');setCustOpen(false);}}
+                       className="w-full text-left px-3 py-2 hover:bg-pink-50 text-sm border-b border-gray-100 last:border-0">
+                       <span className="font-bold text-gray-800">{c.name}</span>
+                       {(c.phone||c.telegram)&&<span className="text-xs text-gray-400 ml-2">{c.phone||c.telegram}</span>}
+                     </button>
+                   ))}
+                   {custSearch.trim()&&!filteredCustomers.find(c=>c.name.toLowerCase()===custSearch.trim().toLowerCase())&&(
+                     <div className="px-3 py-2 text-xs bg-yellow-50 border-t border-yellow-100 text-yellow-700">
+                       <span className="font-bold">"{custSearch}"</span> — new customer, will be created on save
+                     </div>
+                   )}
+                   {!custSearch.trim()&&filteredCustomers.length===0&&(
+                     <p className="px-3 py-2 text-xs text-gray-400">No customers yet</p>
+                   )}
+                 </div>
+               )}
+             </div>
           }
         </div>
 
@@ -657,14 +701,19 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
                   </div>
                   <div className="grid grid-cols-3 gap-2">
                     <Inp label="Qty" type="number" min="1" value={item.quantity} onChange={e=>updateItem(idx,'quantity',e.target.value)}/>
-                    <Inp label="Price (UZS)" type="number" min="0" value={item.priceUZS} onChange={e=>updateItem(idx,'priceUZS',e.target.value)} placeholder="auto"/>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Sale Price</label>
+                      <div className={`border rounded-xl px-3 py-2 text-sm ${prod&&item.priceUZS?'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold':'bg-gray-100 border-gray-200 text-gray-400 italic'}`}>
+                        {prod&&item.priceUZS?fmtUZS(+item.priceUZS):'select product'}
+                      </div>
+                    </div>
                     <Sel label="Type" value={item.type} onChange={e=>updateItem(idx,'type',e.target.value)}>
                       <option>B2C</option><option>B2B</option>
                     </Sel>
                   </div>
                   {prod&&item.priceUZS&&(
                     <p className={`text-xs font-bold ${profit>=0?'text-emerald-600':'text-red-500'}`}>
-                      Profit: {fmtUZS(profit)}
+                      Profit: {fmtUZS(profit)} {profit<0?'⚠️':'✓'}
                     </p>
                   )}
                 </div>
