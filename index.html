@@ -381,7 +381,7 @@ function DashboardPage({orders,orderItems,customers,catalog,expenses,transfers,c
 }
 
 // ── ORDERS PAGE ───────────────────────────────────────────────
-function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,catalog,settings,notify}) {
+function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCustomers,catalog,settings,notify}) {
   const [statusFilter,setStatusFilter]=useState('All');
   const [payFilter,   setPayFilter]   =useState('All');
   const [search,      setSearch]      =useState('');
