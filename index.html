@@ -66,7 +66,7 @@ const fromDB = {
   orderItem:r => ({id:r.id,orderId:r.order_id,productId:r.product_id,quantity:+r.quantity||1,priceUZS:+r.price_uzs||0,type:r.type||'B2C'}),
   expense:  r => ({id:r.id,date:r.date,type:r.type,description:r.description,amountKRW:+r.amount_krw||0,paidBy:r.paid_by||''}),
   transfer: r => ({id:r.id,date:r.date,amountKRW:+r.amount_krw||0,amountUZS:+r.amount_uzs||0,notes:r.notes||''}),
-  capital:  r => ({id:r.id,date:r.date,amountUZS:+r.amount_uzs||0,person:r.person||'',notes:r.notes||''}),
+  capital:  r => ({id:r.id,date:r.date,amountKRW:+r.amount_krw||0,amountUZS:+r.amount_uzs||0,currency:(+r.amount_krw||0)>0?'KRW':'UZS',person:r.person||'',notes:r.notes||''}),
 };
 const toDB = {
   catalog:  p => ({brand:p.brand,name:p.name,category:p.category||null,skin_type:p.skinType||'All',weight_grams:+p.weightGrams||0,estimated_cost_krw:+p.estimatedCostKRW||0,suggested_b2c_price_uzs:+p.suggestedB2CPrice||0,suggested_b2b_price_uzs:+p.suggestedB2BPrice||0,notes:p.notes||null}),
@@ -75,7 +75,7 @@ const toDB = {
   orderItem:i => ({order_id:i.orderId,product_id:i.productId||null,quantity:+i.quantity||1,price_uzs:+i.priceUZS||0,type:i.type||'B2C'}),
   expense:  e => ({date:e.date,type:e.type,description:e.description,amount_krw:+e.amountKRW||0,paid_by:e.paidBy||null}),
   transfer: t => ({date:t.date,amount_krw:+t.amountKRW||0,amount_uzs:+t.amountUZS||0,notes:t.notes||null}),
-  capital:  c => ({date:c.date,amount_uzs:+c.amountUZS||0,person:c.person||null,notes:c.notes||null}),
+  capital:  c => ({date:c.date,amount_krw:c.currency==='KRW'?+c.amount||0:0,amount_uzs:c.currency==='UZS'?+c.amount||0:0,person:c.person||null,notes:c.notes||null}),
 };
 
 // ── UI ATOMS ──────────────────────────────────────────────────
@@ -282,7 +282,7 @@ function DashboardPage({orders,orderItems,customers,catalog,expenses,transfers,c
     const revenueUZS=orderItems.filter(i=>paidOrderIds.has(i.orderId)).reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
     const totalExpKRW=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
     const totalTransKRW=transfers.reduce((s,t)=>s+(+t.amountKRW||0),0);
-    const totalCapUZS=capital.reduce((s,c)=>s+(+c.amountUZS||0),0);
+    const totalCapUZS=capital.reduce((s,c)=>s+(c.currency==='KRW'?(+c.amountKRW||0)*rate:(+c.amountUZS||0)),0);
     const costUZS=(totalExpKRW+totalTransKRW)*rate;
     const profit=revenueUZS-costUZS;
     const byStatus=Object.fromEntries(ORDER_STATUSES.map(s=>[s,orders.filter(o=>o.status===s).length]));
@@ -384,14 +384,22 @@ function DashboardPage({orders,orderItems,customers,catalog,expenses,transfers,c
 function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCustomers,catalog,settings,notify}) {
   const [statusFilter,setStatusFilter]=useState('All');
   const [payFilter,   setPayFilter]   =useState('All');
+  const [monthFilter, setMonthFilter] =useState('All');
   const [search,      setSearch]      =useState('');
   const [showForm,    setShowForm]    =useState(false);
   const [editOrder,   setEditOrder]   =useState(null);
   const [saving,      setSaving]      =useState(false);
 
+  // Build available months from orders
+  const availableMonths=useMemo(()=>{
+    const ms=[...new Set(orders.map(o=>o.createdAt?.slice(0,7)).filter(Boolean))].sort((a,b)=>b.localeCompare(a));
+    return ms;
+  },[orders]);
+
   const filtered=useMemo(()=>{
     let list=statusFilter==='All'?orders:orders.filter(o=>o.status===statusFilter);
     if(payFilter!=='All') list=list.filter(o=>o.paymentStatus===payFilter);
+    if(monthFilter!=='All') list=list.filter(o=>o.createdAt?.slice(0,7)===monthFilter);
     if(search.trim()){
       const q=search.toLowerCase();
       list=list.filter(o=>{
@@ -400,7 +408,7 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
       });
     }
     return list;
-  },[orders,statusFilter,payFilter,search,customers]);
+  },[orders,statusFilter,payFilter,monthFilter,search,customers]);
 
   const updateStatus=async(orderId,newStatus)=>{
     const{error}=await db.from('orders').update({status:newStatus}).eq('id',orderId);
@@ -491,6 +499,13 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
             </button>
           ))}
         </div>
+        {availableMonths.length>0&&(
+          <select value={monthFilter} onChange={e=>setMonthFilter(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold bg-white text-gray-600">
+            <option value="All">All months</option>
+            {availableMonths.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+        )}
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search customer…"
           className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm bg-white ml-auto w-48"/>
       </div>
@@ -1076,17 +1091,9 @@ function ProcurementPage({orders,orderItems,catalog,settings}) {
 
   return(
     <div className="space-y-4 slide-up">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="font-black text-gray-800 text-xl">Buy List</h2>
-          <p className="text-sm text-gray-400">{pendingCount} pending order{pendingCount!==1?'s':''} · what to buy in Korea</p>
-        </div>
-        {grandTotalKRW>0&&(
-          <div className="bg-gradient-to-br from-pink-500 to-rose-600 text-white rounded-2xl px-5 py-3 text-right shadow-sm">
-            <p className="text-xs font-semibold opacity-70">Total to Send Korea</p>
-            <p className="text-xl font-black">{fmtKRW(grandTotalKRW)}</p>
-          </div>
-        )}
+      <div>
+        <h2 className="font-black text-gray-800 text-xl">Buy List</h2>
+        <p className="text-sm text-gray-400">{pendingCount} pending order{pendingCount!==1?'s':''} · what to buy in Korea</p>
       </div>
 
       {list.length===0
@@ -1130,27 +1137,33 @@ function ProcurementPage({orders,orderItems,catalog,settings}) {
 }
 
 // ── FINANCE PAGE ──────────────────────────────────────────────
-function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCapital,settings,notify}) {
+function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCapital,orders,orderItems,settings,notify}) {
   const [tab,setTab]=useState('overview');
   const rate=+settings.uzsPerKrw||8;
 
-  const totalRevUZS=0; // pulled from orders in real usage
+  const paidOrderIds=new Set((orders||[]).filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
+  const totalRevUZS=(orderItems||[]).filter(i=>paidOrderIds.has(i.orderId)).reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
   const totalExpKRW=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
   const totalTransKRW=transfers.reduce((s,t)=>s+(+t.amountKRW||0),0);
   const totalTransUZS=transfers.reduce((s,t)=>s+(+t.amountUZS||0),0);
-  const totalCapUZS=capital.reduce((s,c)=>s+(+c.amountUZS||0),0);
+  const totalCapUZS=capital.reduce((s,c)=>s+(c.currency==='KRW'?(+c.amountKRW||0)*rate:(+c.amountUZS||0)),0);
   const totalCostUZS=(totalExpKRW+totalTransKRW)*rate;
+  const netProfit=totalRevUZS-totalCostUZS;
 
   return(
     <div className="space-y-4 slide-up">
       <h2 className="font-black text-gray-800 text-xl">Finance</h2>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatBox label="Sent to Korea"    value={fmtKRW(totalTransKRW)}  sub={`${fmtUZS(totalTransUZS)} spent`} color="blue"/>
-        <StatBox label="Local Expenses"   value={fmtKRW(totalExpKRW)}    sub="Salary, cargo etc"               color="amber"/>
-        <StatBox label="Total Costs"      value={fmtUZS(totalCostUZS)}   sub="KRW converted"                   color="gray"/>
-        <StatBox label="Capital Added"    value={fmtUZS(totalCapUZS)}    sub="Investments in"                  color="violet"/>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <StatBox label="Revenue (Paid)"   value={fmtUZS(totalRevUZS)}    sub="From paid orders"                color="green"/>
+        <StatBox label="Total Costs"       value={fmtKRW(totalExpKRW+totalTransKRW)} sub="Expenses + Korea transfers"  color="amber"/>
+        <StatBox label="Net Profit"       value={fmtUZS(netProfit)}      sub="Revenue − costs"                 color={netProfit>=0?'violet':'gray'}/>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <StatBox label="Sent to Korea"    value={fmtKRW(totalTransKRW)}  sub={`${fmtUZS(totalTransUZS)}`}     color="blue"/>
+        <StatBox label="Local Expenses"   value={fmtKRW(totalExpKRW)}    sub="Salary, cargo etc"               color="pink"/>
+        <StatBox label="Capital Added"    value={fmtUZS(totalCapUZS)}    sub="Total invested"                  color="violet"/>
       </div>
 
       {/* Tabs */}
@@ -1163,7 +1176,7 @@ function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCap
         ))}
       </div>
 
-      {tab==='overview'&&<FinanceOverview expenses={expenses} transfers={transfers} capital={capital} settings={settings}/>}
+      {tab==='overview'&&<FinanceOverview expenses={expenses} transfers={transfers} capital={capital} orders={orders} orderItems={orderItems} settings={settings}/>}
       {tab==='transfers'&&<TransfersTab transfers={transfers} setTransfers={setTransfers} notify={notify}/>}
       {tab==='expenses'&&<ExpensesTab expenses={expenses} setExpenses={setExpenses} settings={settings} notify={notify}/>}
       {tab==='capital'&&<CapitalTab capital={capital} setCapital={setCapital} notify={notify}/>}
@@ -1171,35 +1184,48 @@ function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCap
   );
 }
 
-function FinanceOverview({expenses,transfers,capital,settings}) {
+function FinanceOverview({expenses,transfers,capital,orders,orderItems,settings}) {
   const rate=+settings.uzsPerKrw||8;
-  // Group by month
   const months={};
-  const addMonth=(date,krw,uzs)=>{
-    const m=date?.slice(0,7)||'Unknown';
-    if(!months[m]) months[m]={krw:0,uzs:0};
-    months[m].krw+=krw||0;
-    months[m].uzs+=uzs||0;
+  const getM=(date)=>date?.slice(0,7)||'Unknown';
+  const addMonth=(m,key,val)=>{
+    if(!months[m]) months[m]={costKRW:0,costUZS:0,revUZS:0};
+    months[m][key]+=val||0;
   };
-  expenses.forEach(e=>addMonth(e.date,+e.amountKRW,+e.amountKRW*rate));
-  transfers.forEach(t=>addMonth(t.date,+t.amountKRW,+t.amountUZS));
+  expenses.forEach(e=>{ addMonth(getM(e.date),'costKRW',+e.amountKRW); addMonth(getM(e.date),'costUZS',+e.amountKRW*rate); });
+  transfers.forEach(t=>{ addMonth(getM(t.date),'costKRW',+t.amountKRW); addMonth(getM(t.date),'costUZS',+t.amountUZS||+t.amountKRW*rate); });
 
-  const sortedMonths=Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,6);
+  // Revenue from paid orders grouped by month
+  const paidIds=new Set((orders||[]).filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
+  const orderMap={};
+  (orders||[]).forEach(o=>{orderMap[o.id]=o;});
+  (orderItems||[]).filter(i=>paidIds.has(i.orderId)).forEach(i=>{
+    const o=orderMap[i.orderId];
+    const m=getM(o?.createdAt);
+    addMonth(m,'revUZS',(+i.priceUZS||0)*(+i.quantity||1));
+  });
+
+  const sortedMonths=Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12);
 
   return(
     <div className="space-y-3">
       {sortedMonths.length===0
         ?<Card className="p-6 text-center text-gray-400">No financial data yet. Add transfers and expenses.</Card>
         :<TblWrap>
-          <thead><tr><th>Month</th><th>Total Spent (KRW)</th><th>≈ UZS</th></tr></thead>
+          <thead><tr><th>Month</th><th>Revenue (UZS)</th><th>Costs (KRW)</th><th>≈ Cost (UZS)</th><th>Profit (UZS)</th></tr></thead>
           <tbody>
-            {sortedMonths.map(([m,v])=>(
-              <tr key={m}>
-                <td className="font-bold text-gray-700">{m}</td>
-                <td className="font-black text-gray-800">{fmtKRW(v.krw)}</td>
-                <td className="text-gray-500">{fmtUZS(v.uzs)}</td>
-              </tr>
-            ))}
+            {sortedMonths.map(([m,v])=>{
+              const profit=v.revUZS-v.costUZS;
+              return(
+                <tr key={m}>
+                  <td className="font-bold text-gray-700">{m}</td>
+                  <td className="font-black text-emerald-600">{v.revUZS>0?fmtUZS(v.revUZS):'—'}</td>
+                  <td className="font-semibold text-gray-700">{fmtKRW(v.costKRW)}</td>
+                  <td className="text-gray-500">{fmtUZS(v.costUZS)}</td>
+                  <td className={`font-black ${profit>=0?'text-violet-600':'text-red-500'}`}>{v.revUZS>0?(profit>=0?'+':'')+fmtUZS(profit):'—'}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </TblWrap>
       }
@@ -1380,23 +1406,29 @@ function CapitalTab({capital,setCapital,notify}) {
     setCapital(prev=>prev.filter(c=>c.id!==id));
   };
 
-  const total=capital.reduce((s,c)=>s+(+c.amountUZS||0),0);
+  const totalKRW=capital.filter(c=>c.currency==='KRW').reduce((s,c)=>s+(+c.amountKRW||0),0);
+  const totalUZS=capital.filter(c=>c.currency==='UZS').reduce((s,c)=>s+(+c.amountUZS||0),0);
 
   return(
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">Total invested: <span className="font-black text-violet-600">{fmtUZS(total)}</span></p>
+        <div className="flex gap-3 text-sm">
+          {totalKRW>0&&<span className="text-gray-500">KRW: <span className="font-black text-blue-600">{fmtKRW(totalKRW)}</span></span>}
+          {totalUZS>0&&<span className="text-gray-500">UZS: <span className="font-black text-violet-600">{fmtUZS(totalUZS)}</span></span>}
+          {totalKRW===0&&totalUZS===0&&<span className="text-gray-400 text-xs">No capital yet</span>}
+        </div>
         <Btn size="sm" onClick={()=>setShowForm(true)}>+ Add Capital</Btn>
       </div>
       {capital.length===0
         ?<Empty icon="💼" title="No capital entries" sub="Record money added to the business"/>
         :<TblWrap>
-          <thead><tr><th>Date</th><th>Amount (UZS)</th><th>Person</th><th>Notes</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Amount</th><th>Currency</th><th>Person</th><th>Notes</th><th></th></tr></thead>
           <tbody>
             {capital.map(c=>(
               <tr key={c.id}>
                 <td className="text-gray-400 text-xs">{fmtDate(c.date)}</td>
-                <td className="font-black text-violet-600">{fmtUZS(c.amountUZS)}</td>
+                <td className="font-black text-violet-600">{c.currency==='KRW'?fmtKRW(c.amountKRW):fmtUZS(c.amountUZS)}</td>
+                <td><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${c.currency==='KRW'?'bg-blue-100 text-blue-600':'bg-purple-100 text-purple-600'}`}>{c.currency}</span></td>
                 <td className="font-semibold text-gray-700">{c.person||'—'}</td>
                 <td className="text-gray-500 text-sm">{c.notes||'—'}</td>
                 <td><Btn size="xs" variant="danger" onClick={()=>del(c.id)}>✕</Btn></td>
@@ -1417,15 +1449,35 @@ function CapitalTab({capital,setCapital,notify}) {
 }
 
 function CapitalForm({onSave,saving}) {
-  const [form,setForm]=useState({date:today(),amountUZS:'',person:'',notes:''});
+  const [form,setForm]=useState({date:today(),amount:'',currency:'KRW',person:'',notes:''});
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
   return(
     <div className="space-y-3">
       <Inp label="Date" required type="date" value={form.date} onChange={e=>f('date',e.target.value)}/>
-      <Inp label="Amount (UZS)" required type="number" min="0" value={form.amountUZS} onChange={e=>f('amountUZS',e.target.value)} placeholder="5000000"/>
+      <div>
+        <label className="block text-xs font-bold text-gray-500 mb-1">Amount <span className="text-pink-500">*</span></label>
+        <div className="flex gap-2">
+          <div className="flex rounded-xl border border-gray-200 overflow-hidden text-sm font-bold">
+            <button type="button" onClick={()=>f('currency','KRW')}
+              className={`px-3 py-2 transition-all ${form.currency==='KRW'?'bg-pink-500 text-white':'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}>
+              KRW ₩
+            </button>
+            <button type="button" onClick={()=>f('currency','UZS')}
+              className={`px-3 py-2 transition-all ${form.currency==='UZS'?'bg-pink-500 text-white':'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}>
+              UZS
+            </button>
+          </div>
+          <input type="number" min="0" value={form.amount} onChange={e=>f('amount',e.target.value)}
+            placeholder={form.currency==='KRW'?'500000':'5000000'}
+            className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:border-pink-400 focus:outline-none"/>
+        </div>
+        {form.amount&&<p className="text-xs text-gray-400 mt-1">
+          {form.currency==='KRW'?fmtKRW(+form.amount):fmtUZS(+form.amount)}
+        </p>}
+      </div>
       <Inp label="Person" value={form.person} onChange={e=>f('person',e.target.value)} placeholder="Who added the money"/>
       <Inp label="Notes" value={form.notes} onChange={e=>f('notes',e.target.value)} placeholder="e.g. Initial investment"/>
-      <Btn size="lg" onClick={()=>{if(!form.amountUZS)return alert('Enter amount.');onSave(form);}} loading={saving}>✓ Save</Btn>
+      <Btn size="lg" onClick={()=>{if(!form.amount)return alert('Enter amount.');onSave(form);}} loading={saving}>✓ Save</Btn>
     </div>
   );
 }
