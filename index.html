@@ -63,7 +63,7 @@ const lsSet   = (k,v) => { try{localStorage.setItem('muna_'+k,JSON.stringify(v))
 const fromDB = {
   catalog:  r => ({id:r.id,brand:r.brand,name:r.name,category:r.category||'',skinType:r.skin_type||'All',weightGrams:+r.weight_grams||0,estimatedCostKRW:+r.estimated_cost_krw||0,suggestedB2CPrice:+r.suggested_b2c_price_uzs||0,suggestedB2BPrice:+r.suggested_b2b_price_uzs||0,notes:r.notes||'',createdAt:r.created_at?.slice(0,10)}),
   customer: r => ({id:r.id,name:r.name,telegram:r.telegram||'',phone:r.phone||'',address:r.address||'',createdAt:r.created_at?.slice(0,10)}),
-  order:    r => ({id:r.id,customerId:r.customer_id,status:r.status||'Pending',paymentStatus:r.payment_status||'Unpaid',salesperson:r.salesperson||'',notes:r.notes||'',trackingNumber:r.tracking_number||'',createdAt:r.created_at?.slice(0,10)}),
+  order:    r => ({id:r.id,customerId:r.customer_id,status:r.status||'Pending',paymentStatus:r.payment_status||'Unpaid',salesperson:r.salesperson||'',notes:r.notes||'',createdAt:r.created_at?.slice(0,10)}),
   orderItem:r => ({id:r.id,orderId:r.order_id,productId:r.product_id,quantity:+r.quantity||1,priceUZS:+r.price_uzs||0,type:r.type||'B2C'}),
   expense:  r => ({id:r.id,date:r.date,type:r.type,description:r.description,amountKRW:+r.amount_krw||0,paidBy:r.paid_by||''}),
   transfer: r => ({id:r.id,date:r.date,amountKRW:+r.amount_krw||0,amountUZS:+r.amount_uzs||0,notes:r.notes||''}),
@@ -72,7 +72,7 @@ const fromDB = {
 const toDB = {
   catalog:  p => ({brand:p.brand,name:p.name,category:p.category||null,skin_type:p.skinType||'All',weight_grams:+p.weightGrams||0,estimated_cost_krw:+p.estimatedCostKRW||0,suggested_b2c_price_uzs:+p.suggestedB2CPrice||0,suggested_b2b_price_uzs:+p.suggestedB2BPrice||0,notes:p.notes||null}),
   customer: c => ({name:c.name,telegram:c.telegram||null,phone:c.phone||null,address:c.address||null}),
-  order:    o => ({customer_id:o.customerId||null,status:o.status||'Pending',payment_status:o.paymentStatus||'Unpaid',salesperson:o.salesperson||null,notes:o.notes||null,tracking_number:o.trackingNumber||null}),
+  order:    o => ({customer_id:o.customerId||null,status:o.status||'Pending',payment_status:o.paymentStatus||'Unpaid',salesperson:o.salesperson||null,notes:o.notes||null}),
   orderItem:i => ({order_id:i.orderId,product_id:i.productId||null,quantity:+i.quantity||1,price_uzs:+i.priceUZS||0,type:i.type||'B2C'}),
   expense:  e => ({date:e.date,type:e.type,description:e.description,amount_krw:+e.amountKRW||0,paid_by:e.paidBy||null}),
   transfer: t => ({date:t.date,amount_krw:+t.amountKRW||0,amount_uzs:+t.amountUZS||0,notes:t.notes||null}),
@@ -495,7 +495,6 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
       `💰 Total: ${fmtUZS(total)}`,
       `📦 Status: ${o.status}`,
       `💳 Payment: ${o.paymentStatus}`,
-      o.trackingNumber?`🔍 Tracking: ${o.trackingNumber}`:'',
       o.notes?`📝 ${o.notes}`:'',
     ].filter(l=>l!==null&&l!==undefined&&!(l===''&&lines.length===0)).join('\n');
     setReceiptOrder({text:receipt, order:o});
@@ -520,9 +519,9 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
             const c=customers.find(x=>x.id===o.customerId);
             const items=orderItems.filter(i=>i.orderId===o.id);
             const total=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
-            return{Date:o.createdAt,Customer:c?.name||'',Phone:c?.phone||'',Status:o.status,Payment:o.paymentStatus,Total_UZS:total,Salesperson:o.salesperson||'',Tracking:o.trackingNumber||'',Notes:o.notes||''};
+            return{Date:o.createdAt,Customer:c?.name||'',Phone:c?.phone||'',Status:o.status,Payment:o.paymentStatus,Total_UZS:total,Salesperson:o.salesperson||'',Notes:o.notes||''};
           });
-          exportCSV(rows,['Date','Customer','Phone','Status','Payment','Total_UZS','Salesperson','Tracking','Notes'],`muna-orders-${today()}.csv`);
+          exportCSV(rows,['Date','Customer','Phone','Status','Payment','Total_UZS','Salesperson','Notes'],`muna-orders-${today()}.csv`);
         }}>⬇ Export CSV</Btn>
         <Btn size="sm" onClick={()=>{setEditOrder(null);setShowForm(true);}}>+ New Order</Btn>
       </div>
@@ -563,7 +562,7 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
         ?<Empty icon="📋" title="No orders found" sub="Create your first order" action={<Btn onClick={()=>setShowForm(true)}>+ New Order</Btn>}/>
         :<TblWrap>
           <thead><tr>
-            <th>Date</th><th>Customer</th><th>Items</th><th>Total (UZS)</th><th>Status</th><th>Payment</th><th>Sales</th><th>Tracking</th><th></th>
+            <th>Date</th><th>Customer</th><th>Items</th><th>Total (UZS)</th><th>Status</th><th>Payment</th><th>Sales</th><th></th>
           </tr></thead>
           <tbody>
             {filtered.map(o=>{
@@ -590,11 +589,6 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
                   <td><StatusBadge status={o.status} onChange={ns=>updateStatus(o.id,ns)}/></td>
                   <td><PayBadge status={o.paymentStatus} onChange={np=>updatePayment(o.id,np)}/></td>
                   <td className="text-gray-500 text-xs">{o.salesperson||'—'}</td>
-                  <td>{o.trackingNumber
-                    ?<a href={`https://www.track24.net/tracking/?id=${o.trackingNumber}&lang=en`} target="_blank" rel="noreferrer"
-                        className="text-blue-500 text-xs font-bold hover:underline">{o.trackingNumber}</a>
-                    :<span className="text-gray-300 text-xs">—</span>}
-                  </td>
                   <td>
                     <div className="flex gap-1">
                       <Btn size="xs" variant="ghost" onClick={()=>shareOrder(o)} title="Share receipt">⎙</Btn>
@@ -641,7 +635,6 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
     status:     order?.status||'Pending',
     paymentStatus: order?.paymentStatus||'Unpaid',
     salesperson:order?.salesperson||sp[0]||'',
-    trackingNumber:order?.trackingNumber||'',
     notes:      order?.notes||'',
   });
   const [items,setItems]=useState(orderItems?.length?orderItems.map(i=>({...i,discountPct:0})):[{productId:'',quantity:1,priceUZS:'',discountPct:0,type:'B2C'}]);
