@@ -55,6 +55,7 @@ const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-GB',{day
 const fmtKRW  = n => `₩${Math.round(+n||0).toLocaleString()}`;
 const fmtUZS  = n => `${Math.round(+n||0).toLocaleString()} UZS`;
 const fmtNum  = n => (+n||0).toLocaleString();
+const fmtMonth= m => { try{ return new Date(m+'-02').toLocaleDateString('en-GB',{month:'short',year:'numeric'}); }catch{ return m; } };
 const lsGet   = (k,d) => { try{const v=localStorage.getItem('muna_'+k);return v?JSON.parse(v):d}catch{return d} };
 const lsSet   = (k,v) => { try{localStorage.setItem('muna_'+k,JSON.stringify(v))}catch{} };
 
@@ -62,7 +63,7 @@ const lsSet   = (k,v) => { try{localStorage.setItem('muna_'+k,JSON.stringify(v))
 const fromDB = {
   catalog:  r => ({id:r.id,brand:r.brand,name:r.name,category:r.category||'',skinType:r.skin_type||'All',weightGrams:+r.weight_grams||0,estimatedCostKRW:+r.estimated_cost_krw||0,suggestedB2CPrice:+r.suggested_b2c_price_uzs||0,suggestedB2BPrice:+r.suggested_b2b_price_uzs||0,notes:r.notes||'',createdAt:r.created_at?.slice(0,10)}),
   customer: r => ({id:r.id,name:r.name,telegram:r.telegram||'',phone:r.phone||'',address:r.address||'',createdAt:r.created_at?.slice(0,10)}),
-  order:    r => ({id:r.id,customerId:r.customer_id,status:r.status||'Pending',paymentStatus:r.payment_status||'Unpaid',salesperson:r.salesperson||'',notes:r.notes||'',createdAt:r.created_at?.slice(0,10)}),
+  order:    r => ({id:r.id,customerId:r.customer_id,status:r.status||'Pending',paymentStatus:r.payment_status||'Unpaid',salesperson:r.salesperson||'',notes:r.notes||'',trackingNumber:r.tracking_number||'',createdAt:r.created_at?.slice(0,10)}),
   orderItem:r => ({id:r.id,orderId:r.order_id,productId:r.product_id,quantity:+r.quantity||1,priceUZS:+r.price_uzs||0,type:r.type||'B2C'}),
   expense:  r => ({id:r.id,date:r.date,type:r.type,description:r.description,amountKRW:+r.amount_krw||0,paidBy:r.paid_by||''}),
   transfer: r => ({id:r.id,date:r.date,amountKRW:+r.amount_krw||0,amountUZS:+r.amount_uzs||0,notes:r.notes||''}),
@@ -71,7 +72,7 @@ const fromDB = {
 const toDB = {
   catalog:  p => ({brand:p.brand,name:p.name,category:p.category||null,skin_type:p.skinType||'All',weight_grams:+p.weightGrams||0,estimated_cost_krw:+p.estimatedCostKRW||0,suggested_b2c_price_uzs:+p.suggestedB2CPrice||0,suggested_b2b_price_uzs:+p.suggestedB2BPrice||0,notes:p.notes||null}),
   customer: c => ({name:c.name,telegram:c.telegram||null,phone:c.phone||null,address:c.address||null}),
-  order:    o => ({customer_id:o.customerId||null,status:o.status||'Pending',payment_status:o.paymentStatus||'Unpaid',salesperson:o.salesperson||null,notes:o.notes||null}),
+  order:    o => ({customer_id:o.customerId||null,status:o.status||'Pending',payment_status:o.paymentStatus||'Unpaid',salesperson:o.salesperson||null,notes:o.notes||null,tracking_number:o.trackingNumber||null}),
   orderItem:i => ({order_id:i.orderId,product_id:i.productId||null,quantity:+i.quantity||1,price_uzs:+i.priceUZS||0,type:i.type||'B2C'}),
   expense:  e => ({date:e.date,type:e.type,description:e.description,amount_krw:+e.amountKRW||0,paid_by:e.paidBy||null}),
   transfer: t => ({date:t.date,amount_krw:+t.amountKRW||0,amount_uzs:+t.amountUZS||0,notes:t.notes||null}),
@@ -132,12 +133,26 @@ const StatusBadge=({status,onChange})=>{
   );
 };
 
+const PAY_CYCLE = {Unpaid:'Partial', Partial:'Paid', Paid:'Unpaid'};
+const PAY_STYLE = {
+  Paid:    'bg-emerald-100 text-emerald-700',
+  Partial: 'bg-yellow-100 text-yellow-700',
+  Unpaid:  'bg-red-100 text-red-600',
+};
+const PAY_LABEL = {Paid:'✓ Paid', Partial:'½ Partial', Unpaid:'⏳ Unpaid'};
+
 const PayBadge=({status,onChange})=>{
-  const paid=status==='Paid';
+  const s=status||'Unpaid';
+  const handleClick=()=>{
+    if(!onChange) return;
+    const next=PAY_CYCLE[s]||'Unpaid';
+    if(s==='Paid'&&!confirm('Mark this order as Unpaid?')) return;
+    onChange(next);
+  };
   return(
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-black cursor-pointer ${paid?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-600'}`}
-      onClick={()=>onChange&&onChange(paid?'Unpaid':'Paid')}>
-      {paid?'✓ Paid':'⏳ Unpaid'}
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-black cursor-pointer ${PAY_STYLE[s]||PAY_STYLE.Unpaid}`}
+      onClick={handleClick}>
+      {PAY_LABEL[s]||s}
     </span>
   );
 };
@@ -388,6 +403,7 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
   const [search,      setSearch]      =useState('');
   const [showForm,    setShowForm]    =useState(false);
   const [editOrder,   setEditOrder]   =useState(null);
+  const [receiptOrder,setReceiptOrder]=useState(null);
   const [saving,      setSaving]      =useState(false);
 
   // Build available months from orders
@@ -461,6 +477,30 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
     finally{setSaving(false);}
   };
 
+  const shareOrder=(o)=>{
+    const c=customers.find(x=>x.id===o.customerId);
+    const items=orderItems.filter(i=>i.orderId===o.id);
+    const total=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+    const lines=items.map(i=>{
+      const p=catalog.find(x=>x.id===i.productId);
+      return `  • ${i.quantity}× ${p?p.name:'Item'} — ${fmtUZS((+i.priceUZS||0)*(+i.quantity||1))}`;
+    });
+    const receipt=[
+      `🛍 Muna K-Beauty Order`,
+      `📅 ${fmtDate(o.createdAt)}`,
+      `👤 ${c?.name||'—'}${c?.phone?' | '+c.phone:''}`,
+      ``,
+      ...lines,
+      ``,
+      `💰 Total: ${fmtUZS(total)}`,
+      `📦 Status: ${o.status}`,
+      `💳 Payment: ${o.paymentStatus}`,
+      o.trackingNumber?`🔍 Tracking: ${o.trackingNumber}`:'',
+      o.notes?`📝 ${o.notes}`:'',
+    ].filter(l=>l!==null&&l!==undefined&&!(l===''&&lines.length===0)).join('\n');
+    setReceiptOrder({text:receipt, order:o});
+  };
+
   const deleteOrder=async(id)=>{
     if(!confirm('Delete this order?')) return;
     await db.from('order_items').delete().eq('order_id',id);
@@ -475,6 +515,15 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
     <div className="space-y-4 slide-up">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-black text-gray-800 text-xl flex-1">Orders</h2>
+        <Btn size="sm" variant="secondary" onClick={()=>{
+          const rows=filtered.map(o=>{
+            const c=customers.find(x=>x.id===o.customerId);
+            const items=orderItems.filter(i=>i.orderId===o.id);
+            const total=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+            return{Date:o.createdAt,Customer:c?.name||'',Phone:c?.phone||'',Status:o.status,Payment:o.paymentStatus,Total_UZS:total,Salesperson:o.salesperson||'',Tracking:o.trackingNumber||'',Notes:o.notes||''};
+          });
+          exportCSV(rows,['Date','Customer','Phone','Status','Payment','Total_UZS','Salesperson','Tracking','Notes'],`muna-orders-${today()}.csv`);
+        }}>⬇ Export CSV</Btn>
         <Btn size="sm" onClick={()=>{setEditOrder(null);setShowForm(true);}}>+ New Order</Btn>
       </div>
 
@@ -503,7 +552,7 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
           <select value={monthFilter} onChange={e=>setMonthFilter(e.target.value)}
             className="border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold bg-white text-gray-600">
             <option value="All">All months</option>
-            {availableMonths.map(m=><option key={m} value={m}>{m}</option>)}
+            {availableMonths.map(m=><option key={m} value={m}>{fmtMonth(m)}</option>)}
           </select>
         )}
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search customer…"
@@ -514,7 +563,7 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
         ?<Empty icon="📋" title="No orders found" sub="Create your first order" action={<Btn onClick={()=>setShowForm(true)}>+ New Order</Btn>}/>
         :<TblWrap>
           <thead><tr>
-            <th>Date</th><th>Customer</th><th>Items</th><th>Total (UZS)</th><th>Status</th><th>Payment</th><th>Sales</th><th></th>
+            <th>Date</th><th>Customer</th><th>Items</th><th>Total (UZS)</th><th>Status</th><th>Payment</th><th>Sales</th><th>Tracking</th><th></th>
           </tr></thead>
           <tbody>
             {filtered.map(o=>{
@@ -541,8 +590,14 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
                   <td><StatusBadge status={o.status} onChange={ns=>updateStatus(o.id,ns)}/></td>
                   <td><PayBadge status={o.paymentStatus} onChange={np=>updatePayment(o.id,np)}/></td>
                   <td className="text-gray-500 text-xs">{o.salesperson||'—'}</td>
+                  <td>{o.trackingNumber
+                    ?<a href={`https://www.track24.net/tracking/?id=${o.trackingNumber}&lang=en`} target="_blank" rel="noreferrer"
+                        className="text-blue-500 text-xs font-bold hover:underline">{o.trackingNumber}</a>
+                    :<span className="text-gray-300 text-xs">—</span>}
+                  </td>
                   <td>
                     <div className="flex gap-1">
+                      <Btn size="xs" variant="ghost" onClick={()=>shareOrder(o)} title="Share receipt">⎙</Btn>
                       <Btn size="xs" variant="ghost" onClick={()=>{setEditOrder(o);setShowForm(true);}}>✎</Btn>
                       <Btn size="xs" variant="danger" onClick={()=>deleteOrder(o.id)}>✕</Btn>
                     </div>
@@ -567,6 +622,14 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
           onClose={()=>{setShowForm(false);setEditOrder(null);}}
         />
       )}
+      {receiptOrder&&(
+        <Modal title="Order Receipt" onClose={()=>setReceiptOrder(null)}>
+          <div className="space-y-3">
+            <pre className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono leading-relaxed">{receiptOrder.text}</pre>
+            <Btn size="lg" onClick={()=>{navigator.clipboard.writeText(receiptOrder.text);}} variant="secondary">📋 Copy to Clipboard</Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -578,6 +641,7 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
     status:     order?.status||'Pending',
     paymentStatus: order?.paymentStatus||'Unpaid',
     salesperson:order?.salesperson||sp[0]||'',
+    trackingNumber:order?.trackingNumber||'',
     notes:      order?.notes||'',
   });
   const [items,setItems]=useState(orderItems?.length?orderItems.map(i=>({...i,discountPct:0})):[{productId:'',quantity:1,priceUZS:'',discountPct:0,type:'B2C'}]);
@@ -780,6 +844,7 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
           </Sel>
         </div>
 
+        <Inp label="Tracking Number" value={form.trackingNumber} onChange={e=>f('trackingNumber',e.target.value)} placeholder="e.g. KR123456789 (fill once shipped)"/>
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1">Notes</label>
           <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2}
@@ -844,11 +909,12 @@ function CustomersPage({customers,setCustomers,orders,orderItems,notify}) {
       {filtered.length===0
         ?<Empty icon="👥" title="No customers yet" sub="Add your first customer" action={<Btn onClick={()=>setShowForm(true)}>+ Add Customer</Btn>}/>
         :<TblWrap>
-          <thead><tr><th>Name</th><th>Telegram / Phone</th><th>Address</th><th>Orders</th><th>Total Spent</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Telegram / Phone</th><th>Address</th><th>Orders</th><th>Total Paid</th><th></th></tr></thead>
           <tbody>
             {filtered.map(c=>{
               const custOrders=orders.filter(o=>o.customerId===c.id);
-              const custItems=orderItems.filter(i=>custOrders.some(o=>o.id===i.orderId));
+              const paidCustOrderIds=new Set(custOrders.filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
+              const custItems=orderItems.filter(i=>paidCustOrderIds.has(i.orderId));
               const spent=custItems.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
               return(
                 <tr key={c.id}>
@@ -1066,7 +1132,7 @@ function ProductForm({product,settings,onSave,onClose,saving}) {
 
 // ── PROCUREMENT PAGE ──────────────────────────────────────────
 function ProcurementPage({orders,orderItems,catalog,settings}) {
-  const rate=+settings.shippingRateKRW||15000;
+  const shipRateKRW=+settings.shippingRateKRW||15000;
 
   const list=useMemo(()=>{
     const pendingOrderIds=new Set(orders.filter(o=>o.status==='Pending').map(o=>o.id));
@@ -1083,7 +1149,7 @@ function ProcurementPage({orders,orderItems,catalog,settings}) {
 
   const grandTotalKRW=list.reduce((s,g)=>{
     if(!g.product) return s;
-    const ship=(g.product.weightGrams/1000)*rate;
+    const ship=(g.product.weightGrams/1000)*shipRateKRW;
     return s+((+g.product.estimatedCostKRW||0)+ship)*g.totalQty;
   },0);
 
@@ -1104,7 +1170,7 @@ function ProcurementPage({orders,orderItems,catalog,settings}) {
           </tr></thead>
           <tbody>
             {list.map((g,i)=>{
-              const ship=g.product?(g.product.weightGrams/1000)*rate:0;
+              const ship=g.product?(g.product.weightGrams/1000)*shipRateKRW:0;
               const unitCost=(+g.product?.estimatedCostKRW||0)+ship;
               const totalCost=unitCost*g.totalQty;
               return(
@@ -1141,14 +1207,17 @@ function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCap
   const [tab,setTab]=useState('overview');
   const rate=+settings.uzsPerKrw||8;
 
-  const paidOrderIds=new Set((orders||[]).filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
-  const totalRevUZS=(orderItems||[]).filter(i=>paidOrderIds.has(i.orderId)).reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
-  const totalExpKRW=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
-  const totalTransKRW=transfers.reduce((s,t)=>s+(+t.amountKRW||0),0);
-  const totalTransUZS=transfers.reduce((s,t)=>s+(+t.amountUZS||0),0);
-  const totalCapUZS=capital.reduce((s,c)=>s+(c.currency==='KRW'?(+c.amountKRW||0)*rate:(+c.amountUZS||0)),0);
-  const totalCostUZS=(totalExpKRW+totalTransKRW)*rate;
-  const netProfit=totalRevUZS-totalCostUZS;
+  const {totalRevUZS,totalExpKRW,totalTransKRW,totalTransUZS,totalCapUZS,totalCostUZS,netProfit}=useMemo(()=>{
+    const paidOrderIds=new Set((orders||[]).filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
+    const totalRevUZS=(orderItems||[]).filter(i=>paidOrderIds.has(i.orderId)).reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+    const totalExpKRW=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
+    const totalTransKRW=transfers.reduce((s,t)=>s+(+t.amountKRW||0),0);
+    const totalTransUZS=transfers.reduce((s,t)=>s+(+t.amountUZS||0),0);
+    const totalCapUZS=capital.reduce((s,c)=>s+(c.currency==='KRW'?(+c.amountKRW||0)*rate:(+c.amountUZS||0)),0);
+    const totalCostUZS=(totalExpKRW+totalTransKRW)*rate;
+    const netProfit=totalRevUZS-totalCostUZS;
+    return{totalRevUZS,totalExpKRW,totalTransKRW,totalTransUZS,totalCapUZS,totalCostUZS,netProfit};
+  },[orders,orderItems,expenses,transfers,capital,rate]);
 
   return(
     <div className="space-y-4 slide-up">
@@ -1168,7 +1237,7 @@ function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCap
 
       {/* Tabs */}
       <div className="flex gap-2">
-        {[['overview','Overview'],['transfers','Korea Transfers'],['expenses','Local Expenses'],['capital','Capital']].map(([k,l])=>(
+        {[['overview','Overview'],['transfers','Korea Transfers'],['expenses','Local Expenses'],['capital','Capital'],['team','Team Performance']].map(([k,l])=>(
           <button key={k} onClick={()=>setTab(k)}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${tab===k?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200 hover:border-pink-300'}`}>
             {l}
@@ -1180,6 +1249,7 @@ function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCap
       {tab==='transfers'&&<TransfersTab transfers={transfers} setTransfers={setTransfers} notify={notify}/>}
       {tab==='expenses'&&<ExpensesTab expenses={expenses} setExpenses={setExpenses} settings={settings} notify={notify}/>}
       {tab==='capital'&&<CapitalTab capital={capital} setCapital={setCapital} notify={notify}/>}
+      {tab==='team'&&<TeamTab orders={orders} orderItems={orderItems} settings={settings}/>}
     </div>
   );
 }
@@ -1193,7 +1263,7 @@ function FinanceOverview({expenses,transfers,capital,orders,orderItems,settings}
     months[m][key]+=val||0;
   };
   expenses.forEach(e=>{ addMonth(getM(e.date),'costKRW',+e.amountKRW); addMonth(getM(e.date),'costUZS',+e.amountKRW*rate); });
-  transfers.forEach(t=>{ addMonth(getM(t.date),'costKRW',+t.amountKRW); addMonth(getM(t.date),'costUZS',+t.amountUZS||+t.amountKRW*rate); });
+  transfers.forEach(t=>{ addMonth(getM(t.date),'costKRW',+t.amountKRW); addMonth(getM(t.date),'costUZS',+t.amountKRW*rate); });
 
   // Revenue from paid orders grouped by month
   const paidIds=new Set((orders||[]).filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
@@ -1218,7 +1288,7 @@ function FinanceOverview({expenses,transfers,capital,orders,orderItems,settings}
               const profit=v.revUZS-v.costUZS;
               return(
                 <tr key={m}>
-                  <td className="font-bold text-gray-700">{m}</td>
+                  <td className="font-bold text-gray-700">{fmtMonth(m)}</td>
                   <td className="font-black text-emerald-600">{v.revUZS>0?fmtUZS(v.revUZS):'—'}</td>
                   <td className="font-semibold text-gray-700">{fmtKRW(v.costKRW)}</td>
                   <td className="text-gray-500">{fmtUZS(v.costUZS)}</td>
@@ -1235,25 +1305,34 @@ function FinanceOverview({expenses,transfers,capital,orders,orderItems,settings}
 
 function TransfersTab({transfers,setTransfers,notify}) {
   const [showForm,setShowForm]=useState(false);
+  const [editT,   setEditT]   =useState(null);
   const [saving,  setSaving]  =useState(false);
 
   const save=async(data)=>{
     setSaving(true);
     try{
-      const{data:nd,error}=await db.from('transfers').insert(toDB.transfer(data)).select().single();
-      if(error) throw error;
-      setTransfers(prev=>[fromDB.transfer(nd),...prev]);
-      notify('Transfer recorded ✓');
-      setShowForm(false);
+      if(editT){
+        const{error}=await db.from('transfers').update(toDB.transfer(data)).eq('id',editT.id);
+        if(error) throw error;
+        setTransfers(prev=>prev.map(t=>t.id===editT.id?{...t,...data}:t));
+        notify('Transfer updated ✓');
+      } else {
+        const{data:nd,error}=await db.from('transfers').insert(toDB.transfer(data)).select().single();
+        if(error) throw error;
+        setTransfers(prev=>[fromDB.transfer(nd),...prev]);
+        notify('Transfer recorded ✓');
+      }
+      setShowForm(false); setEditT(null);
     }catch(e){notify('Save failed: '+e.message,'error');}
     finally{setSaving(false);}
   };
 
   const del=async(id)=>{
     if(!confirm('Delete this transfer?')) return;
-    await db.from('transfers').delete().eq('id',id);
+    const{error}=await db.from('transfers').delete().eq('id',id);
+    if(error) return notify('Delete failed: '+error.message,'error');
     setTransfers(prev=>prev.filter(t=>t.id!==id));
-    notify('Deleted');
+    notify('Transfer deleted');
   };
 
   return(
@@ -1270,23 +1349,26 @@ function TransfersTab({transfers,setTransfers,notify}) {
                 <td className="font-black text-blue-600">{fmtKRW(t.amountKRW)}</td>
                 <td className="font-bold text-gray-700">{t.amountUZS?fmtUZS(t.amountUZS):'—'}</td>
                 <td className="text-gray-500 text-sm">{t.notes||'—'}</td>
-                <td><Btn size="xs" variant="danger" onClick={()=>del(t.id)}>✕</Btn></td>
+                <td><div className="flex gap-1">
+                  <Btn size="xs" variant="ghost" onClick={()=>{setEditT(t);setShowForm(true);}}>✎</Btn>
+                  <Btn size="xs" variant="danger" onClick={()=>del(t.id)}>✕</Btn>
+                </div></td>
               </tr>
             ))}
           </tbody>
         </TblWrap>
       }
       {showForm&&(
-        <Modal title="Transfer to Korea" onClose={()=>setShowForm(false)}>
-          <TransferForm onSave={save} saving={saving}/>
+        <Modal title={editT?'Edit Transfer':'Transfer to Korea'} onClose={()=>{setShowForm(false);setEditT(null);}}>
+          <TransferForm transfer={editT} onSave={save} saving={saving}/>
         </Modal>
       )}
     </div>
   );
 }
 
-function TransferForm({onSave,saving}) {
-  const [form,setForm]=useState({date:today(),amountKRW:'',amountUZS:'',notes:''});
+function TransferForm({transfer,onSave,saving}) {
+  const [form,setForm]=useState({date:transfer?.date||today(),amountKRW:transfer?.amountKRW||'',amountUZS:transfer?.amountUZS||'',notes:transfer?.notes||''});
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
   return(
     <div className="space-y-3">
@@ -1303,26 +1385,35 @@ function TransferForm({onSave,saving}) {
 
 function ExpensesTab({expenses,setExpenses,settings,notify}) {
   const [showForm, setShowForm] =useState(false);
+  const [editE,    setEditE]    =useState(null);
   const [saving,   setSaving]   =useState(false);
   const sp=settings.salespersons||[];
 
   const save=async(data)=>{
     setSaving(true);
     try{
-      const{data:nd,error}=await db.from('expenses').insert(toDB.expense(data)).select().single();
-      if(error) throw error;
-      setExpenses(prev=>[fromDB.expense(nd),...prev]);
-      notify('Expense added ✓');
-      setShowForm(false);
+      if(editE){
+        const{error}=await db.from('expenses').update(toDB.expense(data)).eq('id',editE.id);
+        if(error) throw error;
+        setExpenses(prev=>prev.map(e=>e.id===editE.id?{...e,...data}:e));
+        notify('Expense updated ✓');
+      } else {
+        const{data:nd,error}=await db.from('expenses').insert(toDB.expense(data)).select().single();
+        if(error) throw error;
+        setExpenses(prev=>[fromDB.expense(nd),...prev]);
+        notify('Expense added ✓');
+      }
+      setShowForm(false); setEditE(null);
     }catch(e){notify('Save failed: '+e.message,'error');}
     finally{setSaving(false);}
   };
 
   const del=async(id)=>{
     if(!confirm('Delete this expense?')) return;
-    await db.from('expenses').delete().eq('id',id);
+    const{error}=await db.from('expenses').delete().eq('id',id);
+    if(error) return notify('Delete failed: '+error.message,'error');
     setExpenses(prev=>prev.filter(e=>e.id!==id));
-    notify('Deleted');
+    notify('Expense deleted');
   };
 
   const total=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
@@ -1345,16 +1436,19 @@ function ExpensesTab({expenses,setExpenses,settings,notify}) {
                 <td className="font-semibold text-gray-800">{e.description}</td>
                 <td className="font-black text-red-500">{fmtKRW(e.amountKRW)}</td>
                 <td className="text-gray-500 text-xs">{e.paidBy||'—'}</td>
-                <td><Btn size="xs" variant="danger" onClick={()=>del(e.id)}>✕</Btn></td>
+                <td><div className="flex gap-1">
+                  <Btn size="xs" variant="ghost" onClick={()=>{setEditE(e);setShowForm(true);}}>✎</Btn>
+                  <Btn size="xs" variant="danger" onClick={()=>del(e.id)}>✕</Btn>
+                </div></td>
               </tr>
             ))}
           </tbody>
         </TblWrap>
       }
       {showForm&&(
-        <Modal title="New Expense" onClose={()=>setShowForm(false)}>
+        <Modal title={editE?'Edit Expense':'New Expense'} onClose={()=>{setShowForm(false);setEditE(null);}}>
           <div className="space-y-3">
-            <ExpenseFormInner onSave={save} saving={saving} salespersons={sp}/>
+            <ExpenseFormInner expense={editE} onSave={save} saving={saving} salespersons={sp}/>
           </div>
         </Modal>
       )}
@@ -1362,9 +1456,9 @@ function ExpensesTab({expenses,setExpenses,settings,notify}) {
   );
 }
 
-function ExpenseFormInner({onSave,saving,salespersons}) {
+function ExpenseFormInner({expense,onSave,saving,salespersons}) {
   const sp=salespersons||[];
-  const [form,setForm]=useState({date:today(),type:'Salary',description:'',amountKRW:'',paidBy:sp[0]||''});
+  const [form,setForm]=useState({date:expense?.date||today(),type:expense?.type||'Salary',description:expense?.description||'',amountKRW:expense?.amountKRW||'',paidBy:expense?.paidBy||sp[0]||''});
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
   return(
     <div className="space-y-3">
@@ -1386,24 +1480,34 @@ function ExpenseFormInner({onSave,saving,salespersons}) {
 
 function CapitalTab({capital,setCapital,notify}) {
   const [showForm,setShowForm]=useState(false);
+  const [editC,   setEditC]   =useState(null);
   const [saving,  setSaving]  =useState(false);
 
   const save=async(data)=>{
     setSaving(true);
     try{
-      const{data:nd,error}=await db.from('capital').insert(toDB.capital(data)).select().single();
-      if(error) throw error;
-      setCapital(prev=>[fromDB.capital(nd),...prev]);
-      notify('Capital recorded ✓');
-      setShowForm(false);
+      if(editC){
+        const{error}=await db.from('capital').update(toDB.capital(data)).eq('id',editC.id);
+        if(error) throw error;
+        setCapital(prev=>prev.map(c=>c.id===editC.id?fromDB.capital({...c,amount_krw:data.currency==='KRW'?+data.amount:0,amount_uzs:data.currency==='UZS'?+data.amount:0,date:data.date,person:data.person,notes:data.notes}):c));
+        notify('Capital updated ✓');
+      } else {
+        const{data:nd,error}=await db.from('capital').insert(toDB.capital(data)).select().single();
+        if(error) throw error;
+        setCapital(prev=>[fromDB.capital(nd),...prev]);
+        notify('Capital recorded ✓');
+      }
+      setShowForm(false); setEditC(null);
     }catch(e){notify('Save failed: '+e.message,'error');}
     finally{setSaving(false);}
   };
 
   const del=async(id)=>{
-    if(!confirm('Delete?')) return;
-    await db.from('capital').delete().eq('id',id);
+    if(!confirm('Delete this capital entry?')) return;
+    const{error}=await db.from('capital').delete().eq('id',id);
+    if(error) return notify('Delete failed: '+error.message,'error');
     setCapital(prev=>prev.filter(c=>c.id!==id));
+    notify('Capital entry deleted');
   };
 
   const totalKRW=capital.filter(c=>c.currency==='KRW').reduce((s,c)=>s+(+c.amountKRW||0),0);
@@ -1431,16 +1535,19 @@ function CapitalTab({capital,setCapital,notify}) {
                 <td><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${c.currency==='KRW'?'bg-blue-100 text-blue-600':'bg-purple-100 text-purple-600'}`}>{c.currency}</span></td>
                 <td className="font-semibold text-gray-700">{c.person||'—'}</td>
                 <td className="text-gray-500 text-sm">{c.notes||'—'}</td>
-                <td><Btn size="xs" variant="danger" onClick={()=>del(c.id)}>✕</Btn></td>
+                <td><div className="flex gap-1">
+                  <Btn size="xs" variant="ghost" onClick={()=>{setEditC(c);setShowForm(true);}}>✎</Btn>
+                  <Btn size="xs" variant="danger" onClick={()=>del(c.id)}>✕</Btn>
+                </div></td>
               </tr>
             ))}
           </tbody>
         </TblWrap>
       }
       {showForm&&(
-        <Modal title="Add Capital" onClose={()=>setShowForm(false)}>
+        <Modal title={editC?'Edit Capital':'Add Capital'} onClose={()=>{setShowForm(false);setEditC(null);}}>
           <div className="space-y-3">
-            <CapitalForm onSave={save} saving={saving}/>
+            <CapitalForm capital={editC} onSave={save} saving={saving}/>
           </div>
         </Modal>
       )}
@@ -1448,8 +1555,14 @@ function CapitalTab({capital,setCapital,notify}) {
   );
 }
 
-function CapitalForm({onSave,saving}) {
-  const [form,setForm]=useState({date:today(),amount:'',currency:'KRW',person:'',notes:''});
+function CapitalForm({capital,onSave,saving}) {
+  const [form,setForm]=useState({
+    date:capital?.date||today(),
+    amount:capital?(capital.currency==='KRW'?capital.amountKRW:capital.amountUZS):'',
+    currency:capital?.currency||'KRW',
+    person:capital?.person||'',
+    notes:capital?.notes||'',
+  });
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
   return(
     <div className="space-y-3">
@@ -1482,6 +1595,57 @@ function CapitalForm({onSave,saving}) {
   );
 }
 
+// ── TEAM PERFORMANCE TAB ──────────────────────────────────────
+function TeamTab({orders,orderItems,settings}) {
+  const rate=+settings.uzsPerKrw||8;
+  const stats=useMemo(()=>{
+    const map={};
+    orders.forEach(o=>{
+      const sp=o.salesperson||'Unassigned';
+      if(!map[sp]) map[sp]={name:sp,total:0,paid:0,revenue:0,statuses:{}};
+      map[sp].total+=1;
+      if(o.paymentStatus==='Paid') map[sp].paid+=1;
+      ORDER_STATUSES.forEach(s=>{ map[sp].statuses[s]=(map[sp].statuses[s]||0)+(o.status===s?1:0); });
+    });
+    const paidIds=new Set(orders.filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
+    orderItems.filter(i=>paidIds.has(i.orderId)).forEach(i=>{
+      const o=orders.find(x=>x.id===i.orderId);
+      const sp=o?.salesperson||'Unassigned';
+      if(map[sp]) map[sp].revenue+=(+i.priceUZS||0)*(+i.quantity||1);
+    });
+    return Object.values(map).sort((a,b)=>b.revenue-a.revenue);
+  },[orders,orderItems]);
+
+  if(stats.length===0) return <Card className="p-6 text-center text-gray-400">No orders with salesperson assigned yet.</Card>;
+  return(
+    <div className="space-y-3">
+      <TblWrap>
+        <thead><tr><th>Salesperson</th><th>Total Orders</th><th>Paid Orders</th><th>Revenue (Paid)</th><th>Pending</th><th>Shipped</th><th>Delivered</th></tr></thead>
+        <tbody>
+          {stats.map(s=>(
+            <tr key={s.name}>
+              <td className="font-bold text-gray-800">{s.name}</td>
+              <td className="text-center font-bold text-gray-700">{s.total}</td>
+              <td className="text-center font-bold text-emerald-600">{s.paid}</td>
+              <td className="font-black text-emerald-600">{s.revenue>0?fmtUZS(s.revenue):'—'}</td>
+              <td className="text-center text-amber-600 font-bold">{s.statuses.Pending||0}</td>
+              <td className="text-center text-violet-600 font-bold">{s.statuses.Shipped||0}</td>
+              <td className="text-center text-green-600 font-bold">{s.statuses.Delivered||0}</td>
+            </tr>
+          ))}
+        </tbody>
+      </TblWrap>
+    </div>
+  );
+}
+
+// ── CSV EXPORT HELPERS ────────────────────────────────────────
+function exportCSV(rows,headers,filename){
+  const lines=[headers.join(','),...rows.map(r=>headers.map(h=>JSON.stringify(r[h]??'')).join(','))];
+  const blob=new Blob([lines.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click();
+}
+
 // ── SETTINGS PAGE ─────────────────────────────────────────────
 function SettingsPage({settings,setSettings,notify}) {
   const [shipRate, setShipRate]  =useState(settings.shippingRateKRW||15000);
@@ -1505,6 +1669,7 @@ function SettingsPage({settings,setSettings,notify}) {
         <div>
           <Inp label="Exchange Rate (UZS per 1 KRW)" type="number" min="0" step="0.1" value={uzsPerKrw} onChange={e=>setUzsPerKrw(e.target.value)}/>
           <p className="text-xs text-gray-400 mt-1">₩1,000 = {(1000*(+uzsPerKrw||8)).toLocaleString()} UZS · ₩10,000 = {(10000*(+uzsPerKrw||8)).toLocaleString()} UZS</p>
+          <p className="text-xs text-amber-500 mt-1">⚠ Changing this rate recalculates all historical profit figures. Consider noting the old rate before changing.</p>
         </div>
       </Card>
       <Card className="p-4 space-y-3">
