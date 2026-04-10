@@ -844,7 +844,6 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
           </Sel>
         </div>
 
-        <Inp label="Tracking Number" value={form.trackingNumber} onChange={e=>f('trackingNumber',e.target.value)} placeholder="e.g. KR123456789 (fill once shipped)"/>
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1">Notes</label>
           <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2}
