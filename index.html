@@ -496,7 +496,20 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
         if(ie) throw ie;
         setOrders(prev=>[fromDB.order(od),...prev]);
         setOrderItems(prev=>[...prev,...id.map(fromDB.orderItem)]);
-        notify('Order created ✓');
+        // Deduct stock for items marked as fromStock
+        const stockItems=items.filter(i=>i.fromStock&&i.productId);
+        for(const si of stockItems){
+          const existing=(stock||[]).find(s=>s.productId===si.productId);
+          if(existing){
+            const newQty=Math.max(0,existing.quantity-(+si.quantity||1));
+            await db.from('stock').update({quantity:newQty,updated_at:new Date().toISOString()}).eq('id',existing.id);
+            const{data:log}=await db.from('stock_logs').insert({product_id:si.productId,change:-(+si.quantity||1),reason:'Sold from stock'}).select().single();
+            setStock(prev=>prev.map(s=>s.id===existing.id?{...s,quantity:newQty}:s));
+            if(log) setStockLogs(prev=>[fromDB.stockLog(log),...prev]);
+          }
+        }
+        if(stockItems.length>0) notify(`Order created ✓ · ${stockItems.length} item(s) deducted from UZB stock`);
+        else notify('Order created ✓');
       }
       setShowForm(false); setEditOrder(null);
     }catch(e){notify('Save failed: '+e.message,'error');}
@@ -635,6 +648,7 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
           orderItems={editOrder?orderItems.filter(i=>i.orderId===editOrder.id):[]}
           customers={customers}
           catalog={catalog}
+          stock={stock||[]}
           settings={settings}
           salespersons={settings.salespersons||[]}
           onSave={saveOrder}
@@ -654,7 +668,7 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
   );
 }
 
-function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onSave,onClose,saving}) {
+function OrderForm({order,orderItems,customers,catalog,stock,settings,salespersons,onSave,onClose,saving}) {
   const sp=salespersons?.length?salespersons:['—'];
   const [form,setForm]=useState({
     customerId: order?.customerId||'',
@@ -663,7 +677,7 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
     salesperson:order?.salesperson||sp[0]||'',
     notes:      order?.notes||'',
   });
-  const [items,setItems]=useState(orderItems?.length?orderItems.map(i=>({...i,discountPct:0})):[{productId:'',quantity:1,priceUZS:'',discountPct:0,type:'B2C'}]);
+  const [items,setItems]=useState(orderItems?.length?orderItems.map(i=>({...i,discountPct:0,fromStock:false})):[{productId:'',quantity:1,priceUZS:'',discountPct:0,type:'B2C',fromStock:false}]);
   const [prodSearch,setProdSearch]=useState('');
   const [activeItemIdx,setActiveItemIdx]=useState(null);
   const [custSearch,setCustSearch]=useState('');
@@ -784,6 +798,8 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
           <div className="space-y-2">
             {items.map((item,idx)=>{
               const prod=catalog.find(p=>p.id===item.productId);
+              const stockEntry=(stock||[]).find(s=>s.productId===item.productId);
+              const inStock=stockEntry?.quantity||0;
               const unitPrice=+item.priceUZS||0;
               const disc=Math.min(100,Math.max(0,+item.discountPct||0));
               const effectivePrice=Math.round(unitPrice*(1-disc/100));
@@ -797,9 +813,18 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
                   <div className="flex items-start gap-2">
                     <div className="flex-1">
                       {prod
-                        ?<div className="flex items-center gap-2 bg-pink-50 rounded-lg px-2 py-1.5">
-                           <span className="text-xs font-bold text-pink-600 flex-1 truncate">{prod.brand} · {prod.name}</span>
-                           <button onClick={()=>updateItem(idx,'productId','')} className="text-gray-400 hover:text-red-500 font-black text-sm">×</button>
+                        ?<div className="space-y-1">
+                           <div className="flex items-center gap-2 bg-pink-50 rounded-lg px-2 py-1.5">
+                             <span className="text-xs font-bold text-pink-600 flex-1 truncate">{prod.brand} · {prod.name}</span>
+                             {inStock>0&&<span className="text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-bold whitespace-nowrap">📦 {inStock} in UZB</span>}
+                             <button onClick={()=>updateItem(idx,'productId','')} className="text-gray-400 hover:text-red-500 font-black text-sm">×</button>
+                           </div>
+                           {inStock>0&&(
+                             <button onClick={()=>updateItem(idx,'fromStock',!item.fromStock)}
+                               className={`w-full text-xs font-bold py-1 rounded-lg border transition-all ${item.fromStock?'bg-emerald-500 text-white border-emerald-500':'bg-white text-gray-500 border-gray-200 hover:border-emerald-400 hover:text-emerald-600'}`}>
+                               {item.fromStock?'✓ Fulfilling from UZB stock':'Fulfill from UZB stock?'}
+                             </button>
+                           )}
                          </div>
                         :<div>
                            <input value={activeItemIdx===idx?prodSearch:''} onFocus={()=>{setActiveItemIdx(idx);setProdSearch('');}}
@@ -1385,7 +1410,7 @@ function StockForm({catalog,stock,editItem,onSave,onClose}) {
   const [prodOpen,setProdOpen]=useState(false);
   const [selectedProd,setSelectedProd]=useState(editItem?catalog.find(p=>p.id===editItem.productId):null);
   const [qty,setQty]=useState(editItem?editItem.quantity:'');
-  const [reason,setReason]=useState('Shipment received');
+  const reason='Manual adjustment';
   const [mode,setMode]=useState('add'); // 'add' or 'set'
 
   const filteredProds=useMemo(()=>{
@@ -1454,16 +1479,6 @@ function StockForm({catalog,stock,editItem,onSave,onClose}) {
             className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:border-pink-400 focus:outline-none"/>
         </div>
 
-        <div>
-          <label className="block text-xs font-bold text-gray-500 mb-1">Reason</label>
-          <select value={reason} onChange={e=>setReason(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:border-pink-400 focus:outline-none">
-            <option>Shipment received</option>
-            <option>Order fulfilled from stock</option>
-            <option>Manual adjustment</option>
-            <option>Damaged / Lost</option>
-            <option>Returned by customer</option>
-          </select>
-        </div>
 
         <Btn className="w-full" onClick={submit}>✓ Save</Btn>
       </div>
