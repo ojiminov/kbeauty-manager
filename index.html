@@ -1292,23 +1292,19 @@ function StockPage({catalog,stock,setStock,stockLogs,setStockLogs,notify}) {
     <div className="space-y-4 slide-up">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-black text-gray-800 text-xl flex-1">📦 UZB Stock</h2>
-        <Btn size="sm" onClick={()=>{setEditItem(null);setShowForm(true);}}>+ Add Stock</Btn>
       </div>
 
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* Summary + Add Stock */}
+      <div className="grid grid-cols-2 gap-3">
         <div className="bg-white rounded-2xl border border-pink-50 shadow-sm p-4 text-center">
-          <p className="text-2xl font-black text-gray-800">{totalItems}</p>
-          <p className="text-xs text-gray-400 font-semibold mt-1">Total Units</p>
+          <p className="text-3xl font-black text-gray-800">{totalItems}</p>
+          <p className="text-xs text-gray-400 font-semibold mt-1">Total Units in UZB</p>
         </div>
-        <div className={`rounded-2xl border shadow-sm p-4 text-center ${lowItems>0?'bg-yellow-50 border-yellow-100':'bg-white border-pink-50'}`}>
-          <p className={`text-2xl font-black ${lowItems>0?'text-yellow-600':'text-gray-300'}`}>{lowItems}</p>
-          <p className="text-xs text-gray-400 font-semibold mt-1">Low Stock</p>
-        </div>
-        <div className={`rounded-2xl border shadow-sm p-4 text-center ${outOfStock>0?'bg-red-50 border-red-100':'bg-white border-pink-50'}`}>
-          <p className={`text-2xl font-black ${outOfStock>0?'text-red-500':'text-gray-300'}`}>{outOfStock}</p>
-          <p className="text-xs text-gray-400 font-semibold mt-1">Out of Stock</p>
-        </div>
+        <button onClick={()=>{setEditItem(null);setShowForm(true);}}
+          className="rounded-2xl bg-gradient-to-br from-pink-500 to-rose-500 text-white font-black text-lg shadow-md hover:shadow-lg active:scale-95 transition-all flex flex-col items-center justify-center gap-1 p-4">
+          <span className="text-2xl">+</span>
+          <span className="text-sm">Add Stock</span>
+        </button>
       </div>
 
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search product..." className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-pink-400"/>
@@ -1359,14 +1355,19 @@ function StockPage({catalog,stock,setStock,stockLogs,setStockLogs,notify}) {
         <div>
           <h3 className="font-black text-gray-700 text-sm mb-2">Recent Movements</h3>
           <div className="space-y-1">
-            {stockLogs.slice(0,10).map(l=>{
+            {stockLogs.slice(0,20).map(l=>{
               const prod=catalog.find(p=>p.id===l.productId);
               return(
                 <div key={l.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2 border border-pink-50 text-sm">
                   <span className={`font-black w-10 text-center ${l.change>0?'text-emerald-600':'text-red-500'}`}>{l.change>0?'+':''}{l.change}</span>
                   <span className="font-semibold text-gray-700 flex-1">{prod?`${prod.brand} ${prod.name}`:'Unknown product'}</span>
                   <span className="text-xs text-gray-400">{l.reason}</span>
-                  <span className="text-xs text-gray-300">{l.createdAt?.slice(0,10)}</span>
+                  <span className="text-xs text-gray-300 hidden sm:block">{l.createdAt?.slice(0,10)}</span>
+                  <button onClick={async()=>{
+                    const{error}=await db.from('stock_logs').delete().eq('id',l.id);
+                    if(error) return notify('Delete failed','error');
+                    setStockLogs(prev=>prev.filter(x=>x.id!==l.id));
+                  }} className="text-gray-300 hover:text-red-500 font-black text-lg leading-none ml-1">×</button>
                 </div>
               );
             })}
